@@ -515,19 +515,50 @@ public sealed class MainForm : Form
 
     private void LoadAssets()
     {
-        var iconPath = FindAsset("AppIcon.ico");
-        if (File.Exists(iconPath))
+        _appIcon = LoadIconAsset("ic_launcher.ico", "Assets.ic_launcher.ico");
+        if (_appIcon is not null)
         {
-            using var icon = new Icon(iconPath);
-            _appIcon = (Icon)icon.Clone();
             Icon = _appIcon;
         }
 
-        var logoPath = FindAsset("LogoSemFundo.png");
+        _logoImage = LoadImageAsset("Logo Sem Fundo_3.png", "Assets.LogoSemFundo3.png");
+    }
+
+    private Icon? LoadIconAsset(string fileName, string resourceName)
+    {
+        var iconPath = FindAsset(fileName);
+        if (File.Exists(iconPath))
+        {
+            using var icon = new Icon(iconPath);
+            return (Icon)icon.Clone();
+        }
+
+        using var stream = typeof(Program).Assembly.GetManifestResourceStream(resourceName);
+        if (stream is null)
+        {
+            return null;
+        }
+
+        using var embeddedIcon = new Icon(stream);
+        return (Icon)embeddedIcon.Clone();
+    }
+
+    private Image? LoadImageAsset(string fileName, string resourceName)
+    {
+        var logoPath = FindAsset(fileName);
         if (File.Exists(logoPath))
         {
-            _logoImage = Image.FromFile(logoPath);
+            return Image.FromFile(logoPath);
         }
+
+        using var stream = typeof(Program).Assembly.GetManifestResourceStream(resourceName);
+        if (stream is null)
+        {
+            return null;
+        }
+
+        using var image = Image.FromStream(stream);
+        return new Bitmap(image);
     }
 
     private string FindAsset(string fileName)
