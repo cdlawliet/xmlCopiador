@@ -41,12 +41,12 @@ O manifesto de update deve ter este formato:
 ```json
 {
   "Version": "1.0.0",
-  "DownloadUrl": "https://github.com/cdlawliet/xmlCopiador/releases/download/v1.0.0/XmlCopiador.exe",
+  "DownloadUrl": "https://raw.githubusercontent.com/cdlawliet/xmlCopiador/v1.0.0/release/XmlCopiador.exe",
   "Sha256": ""
 }
 ```
 
-Recomendacao: use o GitHub publico para hospedar o manifesto e use GitHub Releases para hospedar o `XmlCopiador.exe`. O link `raw` funciona bem para o JSON do manifesto; para o binario, Releases costuma ser mais confiavel.
+O exemplo acima usa o proprio GitHub publico como ponto de download, por meio do arquivo `release/XmlCopiador.exe` versionado pela tag.
 
 Se `Sha256` for preenchido, o app so atualiza quando o hash do arquivo baixado confere. Se ficar vazio, ele apenas baixa e substitui.
 
