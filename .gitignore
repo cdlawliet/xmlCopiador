@@ -1,0 +1,26 @@
+# Build outputs
+bin/
+obj/
+dist/
+publish/
+
+# Local/runtime files
+logs/
+*.log
+XmlCopiador.config.json
+
+# IDE/user files
+.vs/
+.idea/
+*.user
+*.suo
+*.rsuser
+
+# OS files
+Thumbs.db
+Desktop.ini
+
+# Local/private legacy files
+copiaxml_original_backup.bat
+contrato de acordo.docx
+conversa google.txt

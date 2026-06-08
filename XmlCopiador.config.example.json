@@ -1,0 +1,12 @@
+{
+  "DestinationBase": "",
+  "Action": "MOVE",
+  "CreateFolders": true,
+  "RetryCount": 2,
+  "RetryDelaySeconds": 2,
+  "Update": {
+    "Enabled": true,
+    "Manifest": "https://raw.githubusercontent.com/cdlawliet/xmlCopiador/main/XmlCopiador.update.json"
+  },
+  "Companies": []
+}
