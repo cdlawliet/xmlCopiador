@@ -745,10 +745,12 @@ public sealed class MainForm : Form
 
         try
         {
-            SetStatus("Verificando atualizacao...");
+            SetStatus("Procurando nova atualizacao...");
+            Log("[UPDATE] Procurando nova atualizacao...");
             var manifest = await LoadUpdateManifestAsync(_config.Update.Manifest);
             if (manifest is null || !IsUpdateAvailable(manifest.Version))
             {
+                Log("[UPDATE] Nenhuma atualizacao encontrada.");
                 SetStatus("Pronto");
                 return;
             }
@@ -760,12 +762,20 @@ public sealed class MainForm : Form
                 return;
             }
 
-            SetStatus($"Baixando versao {manifest.Version}...");
+            Log($"[UPDATE] Atualizacao encontrada: {GetAppVersionText()} -> {manifest.Version}");
+            ShowUpdateMessage(
+                "Atualizacao encontrada",
+                $"Uma nova versao foi encontrada.\n\nVersao atual: {GetAppVersionText()}\nNova versao: {manifest.Version}\n\nO download da atualizacao sera iniciado agora.");
+
+            SetStatus($"Baixando atualizacao {manifest.Version}...");
+            Log($"[UPDATE] Baixando atualizacao {manifest.Version}...");
             var updateFile = Path.Combine(Path.GetTempPath(), $"XmlCopiador_{manifest.Version}_{Guid.NewGuid():N}.exe");
             await DownloadUpdateFileAsync(manifest.DownloadUrl, _config.Update.Manifest, updateFile);
 
             if (!string.IsNullOrWhiteSpace(manifest.Sha256))
             {
+                SetStatus("Validando atualizacao...");
+                Log("[UPDATE] Validando SHA256 da atualizacao...");
                 var hash = ComputeSha256(updateFile);
                 if (!string.Equals(hash, manifest.Sha256, StringComparison.OrdinalIgnoreCase))
                 {
@@ -776,7 +786,11 @@ public sealed class MainForm : Form
                 }
             }
 
-            Log($"[UPDATE] Atualizacao encontrada: {GetAppVersionText()} -> {manifest.Version}");
+            SetStatus("Atualizacao pronta para aplicar...");
+            Log("[UPDATE] Atualizacao baixada e validada.");
+            ShowUpdateMessage(
+                "Atualizacao pronta",
+                $"A atualizacao foi baixada com sucesso.\n\nO aplicativo sera encerrado e reaberto automaticamente na versao {manifest.Version}.");
             LaunchUpdater(updateFile);
             Close();
         }
@@ -785,6 +799,17 @@ public sealed class MainForm : Form
             Log($"[UPDATE] Falha ao verificar atualizacao: {ex.Message}");
             SetStatus("Pronto");
         }
+    }
+
+    private void ShowUpdateMessage(string title, string message)
+    {
+        if (WindowState == FormWindowState.Minimized)
+        {
+            WindowState = FormWindowState.Normal;
+        }
+
+        Activate();
+        MessageBox.Show(this, message, title, MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private async Task<UpdateManifest?> LoadUpdateManifestAsync(string manifestSource)
