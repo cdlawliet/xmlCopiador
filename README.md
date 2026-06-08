@@ -43,4 +43,4 @@ O manifesto publico deste repositorio e:
 https://raw.githubusercontent.com/cdlawliet/xmlCopiador/main/XmlCopiador.update.json
 ```
 
-O `DownloadUrl` do manifesto aponta para o executavel versionado pela tag `v1.0.0`.
+O `DownloadUrl` do manifesto aponta para o executavel versionado pela tag atual.

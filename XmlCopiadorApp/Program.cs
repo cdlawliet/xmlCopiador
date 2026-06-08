@@ -140,6 +140,7 @@ public sealed class MainForm : Form
         Height = 760;
         MinimumSize = new Size(980, 640);
         StartPosition = FormStartPosition.CenterScreen;
+        WindowState = FormWindowState.Maximized;
 
         LoadAssets();
         BuildUi();

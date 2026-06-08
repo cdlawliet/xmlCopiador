@@ -40,9 +40,9 @@ O manifesto de update deve ter este formato:
 
 ```json
 {
-  "Version": "1.0.0",
-  "DownloadUrl": "https://raw.githubusercontent.com/cdlawliet/xmlCopiador/v1.0.0/release/XmlCopiador.exe",
-  "Sha256": ""
+  "Version": "1.0.1",
+  "DownloadUrl": "https://raw.githubusercontent.com/cdlawliet/xmlCopiador/v1.0.1/release/XmlCopiador.exe",
+  "Sha256": "748DE1234144321027CC03062FC0118739F0BD2539604D7C00B93B6FA28F1E0D"
 }
 ```
 
