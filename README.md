@@ -6,6 +6,7 @@ Aplicativo Windows para copiar ou mover XMLs do iCompany para uma pasta local, s
 
 - configuracao salva em `XmlCopiador.config.json`;
 - grade de empresas com CNPJ, estado e origem dos XMLs;
+- geracao opcional dos XMLs via PostgreSQL antes da copia;
 - acao `COPY` ou `MOVE`;
 - criacao automatica das pastas apenas quando existem XMLs para aquele grupo;
 - log em tempo real;

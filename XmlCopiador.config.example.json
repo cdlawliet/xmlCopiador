@@ -4,9 +4,24 @@
   "CreateFolders": true,
   "RetryCount": 2,
   "RetryDelaySeconds": 2,
+  "GenerateXml": false,
+  "CustomPeriod": false,
+  "PeriodStart": null,
+  "PeriodEnd": null,
   "Update": {
     "Enabled": true,
     "Manifest": "https://raw.githubusercontent.com/cdlawliet/xmlCopiador/main/XmlCopiador.update.json"
   },
-  "Companies": []
+  "Companies": [],
+  "DatabaseConnections": [
+    {
+      "Enabled": true,
+      "Server": "",
+      "Port": 5432,
+      "Database": "",
+      "Username": "",
+      "Password": "",
+      "DestinationPath": "/sist/icomp/empresa/exp"
+    }
+  ]
 }

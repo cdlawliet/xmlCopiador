@@ -6,6 +6,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Npgsql;
+using NpgsqlTypes;
 
 namespace XmlCopiadorApp;
 
@@ -14,6 +16,7 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         Application.Run(new MainForm());
@@ -27,8 +30,13 @@ public sealed class XmlCopyConfig
     public bool CreateFolders { get; set; } = true;
     public int RetryCount { get; set; } = 2;
     public int RetryDelaySeconds { get; set; } = 2;
+    public bool GenerateXml { get; set; }
+    public bool CustomPeriod { get; set; }
+    public DateTime? PeriodStart { get; set; }
+    public DateTime? PeriodEnd { get; set; }
     public Dictionary<string, string> MonthFolders { get; set; } = new();
     public List<CompanyConfig> Companies { get; set; } = new();
+    public List<DatabaseConnectionConfig> DatabaseConnections { get; set; } = new();
     public UpdateSettings Update { get; set; } = new();
 }
 
@@ -52,6 +60,17 @@ public sealed class CompanyConfig
     public string Cnpj { get; set; } = "";
     public string Uf { get; set; } = "22";
     public string OriginPath { get; set; } = "";
+}
+
+public sealed class DatabaseConnectionConfig
+{
+    public bool Enabled { get; set; } = true;
+    public string Server { get; set; } = "";
+    public int Port { get; set; } = 5432;
+    public string Database { get; set; } = "";
+    public string Username { get; set; } = "";
+    public string Password { get; set; } = "";
+    public string DestinationPath { get; set; } = "";
 }
 
 public sealed class MonthOption
@@ -89,6 +108,8 @@ internal static class AppTheme
 
 public sealed class MainForm : Form
 {
+    private const string ExportFunctionFileName = "função exportar_xml_nfe.sql";
+    private const string ExportFunctionResourceName = "Sql.exportar_xml_nfe.sql";
     private static readonly HttpClient UpdateHttpClient = new();
 
     private readonly string _baseDir = AppContext.BaseDirectory;
@@ -100,6 +121,7 @@ public sealed class MainForm : Form
 
     private XmlCopyConfig _config = new();
     private BindingList<CompanyConfig> _companies = new();
+    private BindingList<DatabaseConnectionConfig> _databaseConnections = new();
     private CancellationTokenSource? _cts;
     private string _currentLogFile = "";
     private Icon? _appIcon;
@@ -114,9 +136,14 @@ public sealed class MainForm : Form
     private readonly ComboBox _cmbAction = new();
     private readonly CheckBox _chkSimulate = new();
     private readonly CheckBox _chkCreateFolders = new();
+    private readonly CheckBox _chkGenerateXml = new();
+    private readonly CheckBox _chkCustomPeriod = new();
+    private readonly DateTimePicker _dtPeriodStart = new();
+    private readonly DateTimePicker _dtPeriodEnd = new();
     private readonly NumericUpDown _numRetry = new();
     private readonly NumericUpDown _numDelay = new();
     private readonly DataGridView _grid = new();
+    private readonly DataGridView _databaseGrid = new();
     private readonly TextBox _txtLog = new();
     private readonly PurpleProgressBar _progress = new();
     private readonly Label _lblStatus = new();
@@ -128,6 +155,12 @@ public sealed class MainForm : Form
     private readonly Button _btnRemove = new();
     private readonly Button _btnBrowseOrigin = new();
     private readonly Button _btnLogs = new();
+    private readonly Button _btnAddDatabase = new();
+    private readonly Button _btnEditDatabase = new();
+    private readonly Button _btnRemoveDatabase = new();
+    private TableLayoutPanel? _companiesLayout;
+    private GroupBox? _databaseGroup;
+    private bool _updatingPeriodControls;
 
     public MainForm()
     {
@@ -200,7 +233,7 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             Padding = new Padding(0),
-            ColumnCount = 8,
+            ColumnCount = 9,
             RowCount = 3
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));
@@ -209,8 +242,9 @@ public sealed class MainForm : Form
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 105));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 95));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 95));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 105));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 105));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
@@ -234,6 +268,7 @@ public sealed class MainForm : Form
 
         _cmbMonth.Dock = DockStyle.Fill;
         _cmbMonth.DropDownStyle = ComboBoxStyle.DropDownList;
+        _cmbMonth.SelectedIndexChanged += (_, _) => ApplySelectedPeriodDefaults();
         _cmbMonth.Items.AddRange(new object[]
         {
             new MonthOption { Number = 1, Name = "Janeiro" },
@@ -254,6 +289,7 @@ public sealed class MainForm : Form
         _numYear.Maximum = 2099;
         _numYear.Value = DateTime.Today.Year;
         _numYear.Dock = DockStyle.Fill;
+        _numYear.ValueChanged += (_, _) => ApplySelectedPeriodDefaults();
 
         _cmbAction.DropDownStyle = ComboBoxStyle.DropDownList;
         _cmbAction.Items.AddRange(new object[] { "MOVE", "COPY" });
@@ -264,6 +300,29 @@ public sealed class MainForm : Form
 
         _chkCreateFolders.Text = "Criar pastas";
         _chkCreateFolders.Dock = DockStyle.Fill;
+
+        _chkGenerateXml.Text = "Gerar XML";
+        _chkGenerateXml.Dock = DockStyle.Fill;
+        _chkGenerateXml.CheckedChanged += (_, _) =>
+        {
+            UpdateDatabaseSectionVisibility();
+            UpdatePeriodDateFields();
+        };
+
+        _chkCustomPeriod.Text = "Período personalizado";
+        _chkCustomPeriod.Dock = DockStyle.Fill;
+        _chkCustomPeriod.CheckedChanged += (_, _) => UpdatePeriodDateFields();
+
+        foreach (var picker in new[] { _dtPeriodStart, _dtPeriodEnd })
+        {
+            picker.Dock = DockStyle.Fill;
+            picker.Format = DateTimePickerFormat.Custom;
+            picker.CustomFormat = "dd/MM/yyyy";
+            picker.Visible = false;
+        }
+
+        _dtPeriodStart.ValueChanged += (_, _) => NormalizePeriodPickerValues();
+        _dtPeriodEnd.ValueChanged += (_, _) => NormalizePeriodPickerValues();
 
         _numRetry.Minimum = 0;
         _numRetry.Maximum = 20;
@@ -293,6 +352,10 @@ public sealed class MainForm : Form
         layout.Controls.Add(new Label { Text = "Espera", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 2, 2);
         layout.Controls.Add(_numDelay, 3, 2);
         layout.Controls.Add(new Label { Text = "segundos", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 4, 2);
+        layout.Controls.Add(_chkGenerateXml, 5, 2);
+        layout.Controls.Add(_chkCustomPeriod, 6, 2);
+        layout.Controls.Add(_dtPeriodStart, 7, 2);
+        layout.Controls.Add(_dtPeriodEnd, 8, 2);
 
         return group;
     }
@@ -300,10 +363,11 @@ public sealed class MainForm : Form
     private Control BuildCompaniesGroup()
     {
         var group = new GroupBox { Text = "Empresas", Dock = DockStyle.Fill };
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(8) };
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
-        group.Controls.Add(layout);
+        _companiesLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(8) };
+        _companiesLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        _companiesLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+        _companiesLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
+        group.Controls.Add(_companiesLayout);
 
         _grid.Dock = DockStyle.Fill;
         _grid.AutoGenerateColumns = false;
@@ -332,7 +396,7 @@ public sealed class MainForm : Form
             FillWeight = 16
         });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Origem dos XMLs", DataPropertyName = nameof(CompanyConfig.OriginPath), FillWeight = 50 });
-        layout.Controls.Add(_grid, 0, 0);
+        _companiesLayout.Controls.Add(_grid, 0, 0);
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
         _btnAdd.Text = "Adicionar";
@@ -354,8 +418,58 @@ public sealed class MainForm : Form
         _btnSave.Click += (_, _) => SaveConfigFromUi(showMessage: true);
         _btnLogs.Click += (_, _) => OpenLogsFolder();
 
-        layout.Controls.Add(buttons, 0, 1);
+        _companiesLayout.Controls.Add(buttons, 0, 1);
+        _companiesLayout.Controls.Add(BuildDatabaseConnectionsGroup(), 0, 2);
         return group;
+    }
+
+    private Control BuildDatabaseConnectionsGroup()
+    {
+        _databaseGroup = new GroupBox { Text = "Conexões PostgreSQL para gerar XML", Dock = DockStyle.Fill, Visible = false };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(8) };
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+        _databaseGroup.Controls.Add(layout);
+
+        _databaseGrid.Dock = DockStyle.Fill;
+        _databaseGrid.AutoGenerateColumns = false;
+        _databaseGrid.AllowUserToAddRows = false;
+        _databaseGrid.AllowUserToDeleteRows = false;
+        _databaseGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        _databaseGrid.MultiSelect = false;
+        _databaseGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        _databaseGrid.RowHeadersWidth = 28;
+        _databaseGrid.DataError += (_, e) =>
+        {
+            e.ThrowException = false;
+        };
+        _databaseGrid.CellDoubleClick += (_, _) => EditDatabaseConnection();
+        _databaseGrid.Columns.Add(new DataGridViewCheckBoxColumn { HeaderText = "Ativa", DataPropertyName = nameof(DatabaseConnectionConfig.Enabled), Width = 58, FillWeight = 8 });
+        _databaseGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Servidor", DataPropertyName = nameof(DatabaseConnectionConfig.Server), FillWeight = 22 });
+        _databaseGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Porta", DataPropertyName = nameof(DatabaseConnectionConfig.Port), FillWeight = 8 });
+        _databaseGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Banco de dados", DataPropertyName = nameof(DatabaseConnectionConfig.Database), FillWeight = 18 });
+        _databaseGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Usuário", DataPropertyName = nameof(DatabaseConnectionConfig.Username), FillWeight = 14 });
+        _databaseGrid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Caminho de destino", DataPropertyName = nameof(DatabaseConnectionConfig.DestinationPath), FillWeight = 30 });
+        layout.Controls.Add(_databaseGrid, 0, 0);
+
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
+        _btnAddDatabase.Text = "Adicionar conexão";
+        _btnEditDatabase.Text = "Editar";
+        _btnRemoveDatabase.Text = "Remover";
+
+        foreach (var button in new[] { _btnAddDatabase, _btnEditDatabase, _btnRemoveDatabase })
+        {
+            button.Width = button == _btnAddDatabase ? 160 : 120;
+            button.Height = 28;
+            buttons.Controls.Add(button);
+        }
+
+        _btnAddDatabase.Click += (_, _) => AddDatabaseConnection();
+        _btnEditDatabase.Click += (_, _) => EditDatabaseConnection();
+        _btnRemoveDatabase.Click += (_, _) => RemoveDatabaseConnection();
+
+        layout.Controls.Add(buttons, 0, 1);
+        return _databaseGroup;
     }
 
     private Control BuildLogGroup()
@@ -414,6 +528,9 @@ public sealed class MainForm : Form
         StyleButton(_btnBrowseOrigin, primary: false);
         StyleButton(_btnSave, primary: true);
         StyleButton(_btnLogs, primary: false);
+        StyleButton(_btnAddDatabase, primary: false);
+        StyleButton(_btnEditDatabase, primary: false);
+        StyleButton(_btnRemoveDatabase, primary: false);
         StyleButton(_btnStart, primary: true);
         StyleButton(_btnStop, primary: false);
         StyleGrid();
@@ -462,6 +579,10 @@ public sealed class MainForm : Form
                     number.BackColor = AppTheme.InputBackground;
                     number.ForeColor = AppTheme.Text;
                     break;
+                case DateTimePicker picker:
+                    picker.BackColor = AppTheme.InputBackground;
+                    picker.ForeColor = AppTheme.Text;
+                    break;
             }
 
             if (control.Controls.Count > 0)
@@ -495,22 +616,28 @@ public sealed class MainForm : Form
 
     private void StyleGrid()
     {
-        _grid.BackgroundColor = AppTheme.Surface;
-        _grid.BorderStyle = BorderStyle.FixedSingle;
-        _grid.GridColor = AppTheme.Border;
-        _grid.EnableHeadersVisualStyles = false;
-        _grid.ColumnHeadersDefaultCellStyle.BackColor = AppTheme.Primary;
-        _grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
-        _grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = AppTheme.PrimaryDark;
-        _grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = Color.White;
-        _grid.ColumnHeadersDefaultCellStyle.Font = new Font(Font, FontStyle.Bold);
-        _grid.RowHeadersDefaultCellStyle.BackColor = AppTheme.SurfaceAlt;
-        _grid.RowHeadersDefaultCellStyle.ForeColor = AppTheme.TextMuted;
-        _grid.DefaultCellStyle.BackColor = AppTheme.InputBackground;
-        _grid.DefaultCellStyle.ForeColor = AppTheme.Text;
-        _grid.DefaultCellStyle.SelectionBackColor = AppTheme.PrimaryLight;
-        _grid.DefaultCellStyle.SelectionForeColor = AppTheme.Text;
-        _grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(250, 247, 254);
+        StyleDataGrid(_grid);
+        StyleDataGrid(_databaseGrid);
+    }
+
+    private void StyleDataGrid(DataGridView grid)
+    {
+        grid.BackgroundColor = AppTheme.Surface;
+        grid.BorderStyle = BorderStyle.FixedSingle;
+        grid.GridColor = AppTheme.Border;
+        grid.EnableHeadersVisualStyles = false;
+        grid.ColumnHeadersDefaultCellStyle.BackColor = AppTheme.Primary;
+        grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+        grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = AppTheme.PrimaryDark;
+        grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = Color.White;
+        grid.ColumnHeadersDefaultCellStyle.Font = new Font(Font, FontStyle.Bold);
+        grid.RowHeadersDefaultCellStyle.BackColor = AppTheme.SurfaceAlt;
+        grid.RowHeadersDefaultCellStyle.ForeColor = AppTheme.TextMuted;
+        grid.DefaultCellStyle.BackColor = AppTheme.InputBackground;
+        grid.DefaultCellStyle.ForeColor = AppTheme.Text;
+        grid.DefaultCellStyle.SelectionBackColor = AppTheme.PrimaryLight;
+        grid.DefaultCellStyle.SelectionForeColor = AppTheme.Text;
+        grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(250, 247, 254);
     }
 
     private void LoadAssets()
@@ -595,9 +722,11 @@ public sealed class MainForm : Form
 
     private void BindConfigToUi()
     {
+        _updatingPeriodControls = true;
         _txtDestination.Text = _config.DestinationBase;
         _cmbAction.SelectedItem = string.Equals(_config.Action, "COPY", StringComparison.OrdinalIgnoreCase) ? "COPY" : "MOVE";
         _chkCreateFolders.Checked = _config.CreateFolders;
+        _chkGenerateXml.Checked = _config.GenerateXml;
         _numRetry.Value = Math.Clamp(_config.RetryCount, 0, 20);
         _numDelay.Value = Math.Clamp(_config.RetryDelaySeconds, 0, 60);
 
@@ -613,20 +742,33 @@ public sealed class MainForm : Form
             }
         }
 
+        BindPeriodConfigToUi(defaultPeriod.Month, defaultPeriod.Year);
+        _updatingPeriodControls = false;
+        UpdatePeriodDateFields();
+
         _companies = new BindingList<CompanyConfig>(_config.Companies);
         _grid.DataSource = _companies;
+        _databaseConnections = new BindingList<DatabaseConnectionConfig>(_config.DatabaseConnections);
+        _databaseGrid.DataSource = _databaseConnections;
+        UpdateDatabaseSectionVisibility();
     }
 
     private void SaveConfigFromUi(bool showMessage)
     {
         _grid.EndEdit();
+        _databaseGrid.EndEdit();
 
         _config.DestinationBase = _txtDestination.Text.Trim();
         _config.Action = (_cmbAction.SelectedItem?.ToString() ?? "MOVE").ToUpperInvariant();
         _config.CreateFolders = _chkCreateFolders.Checked;
+        _config.GenerateXml = _chkGenerateXml.Checked;
+        _config.CustomPeriod = _chkCustomPeriod.Checked;
+        _config.PeriodStart = _dtPeriodStart.Value.Date;
+        _config.PeriodEnd = _dtPeriodEnd.Value.Date;
         _config.RetryCount = (int)_numRetry.Value;
         _config.RetryDelaySeconds = (int)_numDelay.Value;
         _config.Companies = _companies.ToList();
+        _config.DatabaseConnections = _databaseConnections.ToList();
         EnsureConfigDefaults(_config);
         SaveConfig(_config);
 
@@ -657,7 +799,10 @@ public sealed class MainForm : Form
             CreateFolders = true,
             RetryCount = 2,
             RetryDelaySeconds = 2,
+            GenerateXml = false,
+            CustomPeriod = false,
             Companies = new List<CompanyConfig>(),
+            DatabaseConnections = new List<DatabaseConnectionConfig>(),
             Update = new UpdateSettings()
         };
 
@@ -693,6 +838,17 @@ public sealed class MainForm : Form
         }
 
         config.Companies ??= new List<CompanyConfig>();
+        config.DatabaseConnections ??= new List<DatabaseConnectionConfig>();
+        if (config.PeriodStart.HasValue)
+        {
+            config.PeriodStart = config.PeriodStart.Value.Date;
+        }
+
+        if (config.PeriodEnd.HasValue)
+        {
+            config.PeriodEnd = config.PeriodEnd.Value.Date;
+        }
+
         config.Update ??= new UpdateSettings();
         var validStateCodes = StateOptions().Select(s => s.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var company in config.Companies)
@@ -703,9 +859,165 @@ public sealed class MainForm : Form
             }
         }
 
+        foreach (var connection in config.DatabaseConnections)
+        {
+            connection.Port = Math.Clamp(connection.Port <= 0 ? 5432 : connection.Port, 1, 65535);
+            connection.Server = connection.Server.Trim();
+            connection.Database = connection.Database.Trim();
+            connection.Username = connection.Username.Trim();
+            connection.DestinationPath = connection.DestinationPath.Trim();
+        }
+
         config.Action = string.Equals(config.Action, "COPY", StringComparison.OrdinalIgnoreCase) ? "COPY" : "MOVE";
         config.RetryCount = Math.Clamp(config.RetryCount, 0, 20);
         config.RetryDelaySeconds = Math.Clamp(config.RetryDelaySeconds, 0, 60);
+    }
+
+    private void BindPeriodConfigToUi(int month, int year)
+    {
+        var (monthStart, monthEnd) = GetMonthDateRange(month, year);
+        var isCurrentMonth = IsCurrentMonth(month, year);
+        var defaultEnd = isCurrentMonth ? DateTime.Today : monthEnd;
+
+        SetDatePickerValue(_dtPeriodStart, _config.PeriodStart ?? monthStart);
+        SetDatePickerValue(_dtPeriodEnd, _config.PeriodEnd ?? defaultEnd);
+        _chkCustomPeriod.Checked = isCurrentMonth || _config.CustomPeriod;
+        _chkCustomPeriod.Enabled = !isCurrentMonth;
+        NormalizePeriodPickerValues();
+    }
+
+    private void ApplySelectedPeriodDefaults()
+    {
+        if (_updatingPeriodControls)
+        {
+            return;
+        }
+
+        var period = GetSelectedMonthDateRange();
+        var isCurrentMonth = IsSelectedCurrentMonth();
+
+        _updatingPeriodControls = true;
+        try
+        {
+            _chkCustomPeriod.Checked = isCurrentMonth;
+            _chkCustomPeriod.Enabled = !isCurrentMonth;
+            SetDatePickerValue(_dtPeriodStart, period.Start);
+            SetDatePickerValue(_dtPeriodEnd, isCurrentMonth ? DateTime.Today : period.End);
+        }
+        finally
+        {
+            _updatingPeriodControls = false;
+        }
+
+        UpdatePeriodDateFields();
+    }
+
+    private void UpdatePeriodDateFields()
+    {
+        var showDates = _chkGenerateXml.Checked && _chkCustomPeriod.Checked;
+        _chkCustomPeriod.Visible = _chkGenerateXml.Checked;
+        _dtPeriodStart.Visible = showDates;
+        _dtPeriodEnd.Visible = showDates;
+        _dtPeriodStart.Enabled = showDates;
+        _dtPeriodEnd.Enabled = showDates;
+
+        if (IsSelectedCurrentMonth())
+        {
+            if (!_chkCustomPeriod.Checked)
+            {
+                _chkCustomPeriod.Checked = true;
+            }
+
+            _chkCustomPeriod.Enabled = false;
+            if (_dtPeriodEnd.Value.Date > DateTime.Today)
+            {
+                SetDatePickerValue(_dtPeriodEnd, DateTime.Today);
+            }
+        }
+        else
+        {
+            _chkCustomPeriod.Enabled = _chkGenerateXml.Checked;
+        }
+
+        NormalizePeriodPickerValues();
+    }
+
+    private void NormalizePeriodPickerValues()
+    {
+        if (_updatingPeriodControls)
+        {
+            return;
+        }
+
+        _updatingPeriodControls = true;
+        try
+        {
+            if (IsSelectedCurrentMonth() && _dtPeriodEnd.Value.Date > DateTime.Today)
+            {
+                SetDatePickerValue(_dtPeriodEnd, DateTime.Today);
+            }
+
+            if (_dtPeriodStart.Value.Date > _dtPeriodEnd.Value.Date)
+            {
+                SetDatePickerValue(_dtPeriodStart, _dtPeriodEnd.Value.Date);
+            }
+        }
+        finally
+        {
+            _updatingPeriodControls = false;
+        }
+    }
+
+    private (DateTime Start, DateTime End) GetSelectedGenerationPeriod()
+    {
+        var selectedPeriod = GetSelectedMonthDateRange();
+        if (_chkGenerateXml.Checked && _chkCustomPeriod.Checked)
+        {
+            return (_dtPeriodStart.Value.Date, _dtPeriodEnd.Value.Date);
+        }
+
+        return selectedPeriod;
+    }
+
+    private (DateTime Start, DateTime End) GetSelectedMonthDateRange()
+    {
+        var month = (_cmbMonth.SelectedItem as MonthOption)?.Number ?? DateTime.Today.Month;
+        var year = (int)_numYear.Value;
+        return GetMonthDateRange(month, year);
+    }
+
+    private static (DateTime Start, DateTime End) GetMonthDateRange(int month, int year)
+    {
+        var start = new DateTime(year, month, 1);
+        return (start, start.AddMonths(1).AddDays(-1));
+    }
+
+    private bool IsSelectedCurrentMonth()
+    {
+        var month = (_cmbMonth.SelectedItem as MonthOption)?.Number ?? DateTime.Today.Month;
+        var year = (int)_numYear.Value;
+        return IsCurrentMonth(month, year);
+    }
+
+    private static bool IsCurrentMonth(int month, int year)
+    {
+        var today = DateTime.Today;
+        return year == today.Year && month == today.Month;
+    }
+
+    private static void SetDatePickerValue(DateTimePicker picker, DateTime value)
+    {
+        var date = value.Date;
+        if (date < picker.MinDate)
+        {
+            date = picker.MinDate;
+        }
+        else if (date > picker.MaxDate)
+        {
+            date = picker.MaxDate;
+        }
+
+        picker.Value = date;
     }
 
     private void BrowseDestination()
@@ -759,6 +1071,78 @@ public sealed class MainForm : Form
         {
             _companies.Remove(company);
         }
+    }
+
+    private void UpdateDatabaseSectionVisibility()
+    {
+        if (_companiesLayout is null || _databaseGroup is null)
+        {
+            return;
+        }
+
+        var visible = _chkGenerateXml.Checked;
+        _databaseGroup.Visible = visible;
+        _companiesLayout.RowStyles[2].Height = visible ? 210 : 0;
+    }
+
+    private void AddDatabaseConnection()
+    {
+        using var dialog = new DatabaseConnectionDialog();
+        if (dialog.ShowDialog(this) == DialogResult.OK && dialog.Connection is not null)
+        {
+            _databaseConnections.Add(dialog.Connection);
+        }
+    }
+
+    private void EditDatabaseConnection()
+    {
+        if (_databaseGrid.CurrentRow?.DataBoundItem is not DatabaseConnectionConfig connection)
+        {
+            return;
+        }
+
+        using var dialog = new DatabaseConnectionDialog(CloneDatabaseConnection(connection));
+        if (dialog.ShowDialog(this) == DialogResult.OK && dialog.Connection is not null)
+        {
+            CopyDatabaseConnection(dialog.Connection, connection);
+            _databaseGrid.Refresh();
+        }
+    }
+
+    private void RemoveDatabaseConnection()
+    {
+        if (_databaseGrid.CurrentRow?.DataBoundItem is not DatabaseConnectionConfig connection)
+        {
+            return;
+        }
+
+        var label = string.IsNullOrWhiteSpace(connection.Database) ? connection.Server : $"{connection.Server}/{connection.Database}";
+        if (MessageBox.Show($"Remover a conexão '{label}'?", "Conexões PostgreSQL", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+        {
+            _databaseConnections.Remove(connection);
+        }
+    }
+
+    private static DatabaseConnectionConfig CloneDatabaseConnection(DatabaseConnectionConfig connection) => new()
+    {
+        Enabled = connection.Enabled,
+        Server = connection.Server,
+        Port = connection.Port,
+        Database = connection.Database,
+        Username = connection.Username,
+        Password = connection.Password,
+        DestinationPath = connection.DestinationPath
+    };
+
+    private static void CopyDatabaseConnection(DatabaseConnectionConfig source, DatabaseConnectionConfig target)
+    {
+        target.Enabled = source.Enabled;
+        target.Server = source.Server;
+        target.Port = source.Port;
+        target.Database = source.Database;
+        target.Username = source.Username;
+        target.Password = source.Password;
+        target.DestinationPath = source.DestinationPath;
     }
 
     private void OpenLogsFolder()
@@ -996,13 +1380,22 @@ del "%~f0" >nul 2>nul
         var selectedMonth = _cmbMonth.SelectedItem as MonthOption ?? new MonthOption { Number = DateTime.Today.Month, Name = "" };
         var year = (int)_numYear.Value;
         var simulate = _chkSimulate.Checked;
+        var generationPeriod = GetSelectedGenerationPeriod();
         var snapshot = CloneConfig(_config);
 
         _cts = new CancellationTokenSource();
 
         try
         {
-            await Task.Run(() => ProcessXmls(snapshot, selectedMonth.Number, year, simulate, _cts.Token));
+            await Task.Run(async () =>
+            {
+                if (snapshot.GenerateXml)
+                {
+                    await GenerateXmlsFromDatabasesAsync(snapshot, generationPeriod.Start, generationPeriod.End, _cts.Token);
+                }
+
+                ProcessXmls(snapshot, selectedMonth.Number, year, simulate, _cts.Token);
+            });
             SetStatus(_cts.IsCancellationRequested ? "Cancelado" : "Concluido");
         }
         catch (Exception ex)
@@ -1038,6 +1431,80 @@ del "%~f0" >nul 2>nul
             return false;
         }
 
+        if (_config.GenerateXml)
+        {
+            var activeConnections = _config.DatabaseConnections.Where(c => c.Enabled).ToList();
+            if (activeConnections.Count == 0)
+            {
+                message = "Marque pelo menos uma conexao PostgreSQL ativa para gerar os XMLs.";
+                return false;
+            }
+
+            foreach (var connection in activeConnections)
+            {
+                if (!ValidateDatabaseConnection(connection, out message))
+                {
+                    return false;
+                }
+            }
+
+            var generationPeriod = GetSelectedGenerationPeriod();
+            if (generationPeriod.Start > generationPeriod.End)
+            {
+                message = "A data inicial do periodo nao pode ser maior que a data final.";
+                return false;
+            }
+
+            if (IsSelectedCurrentMonth() && generationPeriod.End > DateTime.Today)
+            {
+                message = "A data final do mes atual nao pode ser maior que a data de hoje.";
+                return false;
+            }
+        }
+
+        message = "";
+        return true;
+    }
+
+    private static bool ValidateDatabaseConnection(DatabaseConnectionConfig connection, out string message)
+    {
+        var label = GetDatabaseLabel(connection);
+        if (string.IsNullOrWhiteSpace(connection.Server))
+        {
+            message = $"Informe o servidor da conexão PostgreSQL '{label}'.";
+            return false;
+        }
+
+        if (connection.Port is < 1 or > 65535)
+        {
+            message = $"Informe uma porta válida para a conexão PostgreSQL '{label}'.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(connection.Database))
+        {
+            message = $"Informe o banco de dados da conexão PostgreSQL '{label}'.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(connection.Username))
+        {
+            message = $"Informe o usuário da conexão PostgreSQL '{label}'.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(connection.DestinationPath))
+        {
+            message = $"Informe o caminho de destino da conexão PostgreSQL '{label}'.";
+            return false;
+        }
+
+        if (!connection.DestinationPath.Trim().StartsWith("/", StringComparison.Ordinal))
+        {
+            message = $"O caminho de destino da conexão PostgreSQL '{label}' deve estar no formato Linux. Exemplo: /sist/icomp/empresa/exp";
+            return false;
+        }
+
         message = "";
         return true;
     }
@@ -1056,7 +1523,18 @@ del "%~f0" >nul 2>nul
             _btnStop.Enabled = running;
             _btnSave.Enabled = !running;
             _grid.ReadOnly = running;
+            _databaseGrid.ReadOnly = running;
             _chkSimulate.Enabled = !running;
+            _chkGenerateXml.Enabled = !running;
+            _chkCustomPeriod.Enabled = !running && _chkGenerateXml.Checked && !IsSelectedCurrentMonth();
+            _dtPeriodStart.Enabled = !running && _chkGenerateXml.Checked && _chkCustomPeriod.Checked;
+            _dtPeriodEnd.Enabled = !running && _chkGenerateXml.Checked && _chkCustomPeriod.Checked;
+            _btnAdd.Enabled = !running;
+            _btnRemove.Enabled = !running;
+            _btnBrowseOrigin.Enabled = !running;
+            _btnAddDatabase.Enabled = !running;
+            _btnEditDatabase.Enabled = !running;
+            _btnRemoveDatabase.Enabled = !running;
             _lblStatus.Text = running ? "Executando..." : _lblStatus.Text;
 
             if (running)
@@ -1074,6 +1552,145 @@ del "%~f0" >nul 2>nul
         }
 
         if (InvokeRequired) BeginInvoke(Apply); else Apply();
+    }
+
+    private async Task GenerateXmlsFromDatabasesAsync(XmlCopyConfig config, DateTime periodStart, DateTime periodEnd, CancellationToken token)
+    {
+        var activeConnections = config.DatabaseConnections.Where(c => c.Enabled).ToList();
+        if (activeConnections.Count == 0)
+        {
+            return;
+        }
+
+        var functionSql = LoadExportFunctionSql();
+        SetStatus("Gerando XMLs no PostgreSQL...");
+        Log("==========================================================");
+        Log("Geracao de XMLs no PostgreSQL");
+        Log("==========================================================");
+        Log($"Periodo : {periodStart:dd/MM/yyyy} ate {periodEnd:dd/MM/yyyy}");
+        Log($"Bancos  : {activeConnections.Count}");
+        Log("==========================================================");
+
+        for (var index = 0; index < activeConnections.Count; index++)
+        {
+            token.ThrowIfCancellationRequested();
+            var connectionConfig = activeConnections[index];
+            var label = GetDatabaseLabel(connectionConfig);
+            Log("");
+            Log($"Banco {index + 1}/{activeConnections.Count}: {label}");
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(DatabaseConnectionDialog.BuildConnectionString(connectionConfig));
+                await connection.OpenAsync(token);
+
+                if (!await ExportFunctionExistsAsync(connection, token))
+                {
+                    Log("  Funcao exportar_xml_nfe nao encontrada. Criando...");
+                    await using var createCommand = new NpgsqlCommand(functionSql, connection) { CommandTimeout = 0 };
+                    await createCommand.ExecuteNonQueryAsync(token);
+                    Log("  Funcao exportar_xml_nfe criada.");
+                }
+                else
+                {
+                    Log("  Funcao exportar_xml_nfe encontrada.");
+                }
+
+                var destinationPath = connectionConfig.DestinationPath.Trim().Replace('\\', '/');
+                await using var exportCommand = new NpgsqlCommand("select exportar_xml_nfe(@data_inicial, @data_final, @caminho)", connection)
+                {
+                    CommandTimeout = 0
+                };
+                exportCommand.Parameters.Add("data_inicial", NpgsqlDbType.Date).Value = periodStart.Date;
+                exportCommand.Parameters.Add("data_final", NpgsqlDbType.Date).Value = periodEnd.Date;
+                exportCommand.Parameters.Add("caminho", NpgsqlDbType.Text).Value = destinationPath;
+
+                Log($"  Executando exportacao para {destinationPath}");
+                Log($"  Script executado: {BuildExportFunctionCallLog(periodStart, periodEnd, destinationPath)}");
+                if (!destinationPath.EndsWith("/", StringComparison.Ordinal))
+                {
+                    Log("  [AVISO] Caminho sem '/' no final. Pela funcao atual, os arquivos ficam com este caminho como prefixo do nome.");
+                }
+                var result = await exportCommand.ExecuteScalarAsync(token);
+                var generatedFiles = result is null || result == DBNull.Value ? 0 : Convert.ToInt32(result);
+                Log($"  [OK] {generatedFiles} arquivo(s) gerado(s).");
+            }
+            catch (PostgresException ex)
+            {
+                throw new InvalidOperationException($"Falha ao gerar XMLs em {label}: {DatabaseConnectionDialog.FormatPostgresError(ex, connectionConfig)}", ex);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                throw new InvalidOperationException($"Falha ao gerar XMLs em {label}: {DatabaseConnectionDialog.NormalizeDatabaseMessage(ex.Message)}", ex);
+            }
+        }
+
+        Log("");
+        Log("Geracao de XMLs concluida em todos os bancos ativos.");
+    }
+
+    private static async Task<bool> ExportFunctionExistsAsync(NpgsqlConnection connection, CancellationToken token)
+    {
+        const string sql = """
+select exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where p.proname = 'exportar_xml_nfe'
+      and p.pronargs = 3
+      and p.proargtypes[0] = 'date'::regtype
+      and p.proargtypes[1] = 'date'::regtype
+      and p.proargtypes[2] = 'text'::regtype
+      and n.nspname = any (current_schemas(true))
+)
+""";
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        var result = await command.ExecuteScalarAsync(token);
+        return result is bool exists && exists;
+    }
+
+    private string LoadExportFunctionSql()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(_baseDir, ExportFunctionFileName),
+            Path.GetFullPath(Path.Combine(_baseDir, "..", "..", "..", "..", ExportFunctionFileName))
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return File.ReadAllText(candidate, Encoding.UTF8);
+            }
+        }
+
+        using var stream = typeof(Program).Assembly.GetManifestResourceStream(ExportFunctionResourceName);
+        if (stream is not null)
+        {
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            return reader.ReadToEnd();
+        }
+
+        throw new FileNotFoundException($"Nao encontrei o arquivo {ExportFunctionFileName} para criar a funcao exportar_xml_nfe.");
+    }
+
+    private static string BuildExportFunctionCallLog(DateTime periodStart, DateTime periodEnd, string destinationPath)
+    {
+        return $"SELECT exportar_xml_nfe('{periodStart:yyyy-MM-dd}', '{periodEnd:yyyy-MM-dd}', '{EscapeSqlLiteral(destinationPath)}');";
+    }
+
+    private static string EscapeSqlLiteral(string value)
+    {
+        return value.Replace("'", "''", StringComparison.Ordinal);
+    }
+
+    private static string GetDatabaseLabel(DatabaseConnectionConfig connection)
+    {
+        var server = string.IsNullOrWhiteSpace(connection.Server) ? "(sem servidor)" : connection.Server.Trim();
+        var database = string.IsNullOrWhiteSpace(connection.Database) ? "(sem banco)" : connection.Database.Trim();
+        return $"{server}:{connection.Port}/{database}";
     }
 
     private void ProcessXmls(XmlCopyConfig config, int month, int year, bool simulate, CancellationToken token)
@@ -1498,6 +2115,374 @@ del "%~f0" >nul 2>nul
         }
 
         if (InvokeRequired) BeginInvoke(Append); else Append();
+    }
+}
+
+internal sealed class DatabaseConnectionDialog : Form
+{
+    private readonly CheckBox _chkEnabled = new();
+    private readonly TextBox _txtServer = new();
+    private readonly NumericUpDown _numPort = new();
+    private readonly TextBox _txtDatabase = new();
+    private readonly TextBox _txtUsername = new();
+    private readonly TextBox _txtPassword = new();
+    private readonly TextBox _txtDestinationPath = new();
+    private readonly Button _btnTest = new();
+    private readonly Button _btnSave = new();
+    private readonly Button _btnCancel = new();
+    private readonly Label _lblStatus = new();
+    private bool _connectionTested;
+
+    public DatabaseConnectionConfig? Connection { get; private set; }
+
+    public DatabaseConnectionDialog(DatabaseConnectionConfig? connection = null)
+    {
+        Text = "Conexão PostgreSQL";
+        Width = 560;
+        Height = 390;
+        MinimumSize = new Size(520, 360);
+        StartPosition = FormStartPosition.CenterParent;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        BackColor = AppTheme.WindowBackground;
+        ForeColor = AppTheme.Text;
+        Font = new Font("Segoe UI", 9F);
+
+        BuildUi();
+        Bind(connection ?? new DatabaseConnectionConfig());
+        ResetConnectionTest();
+    }
+
+    private void BuildUi()
+    {
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(14),
+            ColumnCount = 1,
+            RowCount = 3
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        Controls.Add(root);
+
+        var fields = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 7
+        };
+        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
+        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        for (var i = 0; i < fields.RowCount; i++)
+        {
+            fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        }
+
+        _chkEnabled.Text = "Ativa";
+        _chkEnabled.Dock = DockStyle.Fill;
+
+        _txtServer.Dock = DockStyle.Fill;
+        _numPort.Minimum = 1;
+        _numPort.Maximum = 65535;
+        _numPort.Value = 5432;
+        _numPort.Dock = DockStyle.Left;
+        _numPort.Width = 110;
+        _txtDatabase.Dock = DockStyle.Fill;
+        _txtUsername.Dock = DockStyle.Fill;
+        _txtPassword.Dock = DockStyle.Fill;
+        _txtPassword.UseSystemPasswordChar = true;
+        _txtDestinationPath.Dock = DockStyle.Fill;
+        _txtDestinationPath.PlaceholderText = "/sist/icomp/empresa/exp";
+
+        fields.Controls.Add(new Label { Text = "Ativa", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 0, 0);
+        fields.Controls.Add(_chkEnabled, 1, 0);
+        AddTextField(fields, "Servidor", _txtServer, 1);
+        fields.Controls.Add(new Label { Text = "Porta", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 0, 2);
+        fields.Controls.Add(_numPort, 1, 2);
+        AddTextField(fields, "Banco de dados", _txtDatabase, 3);
+        AddTextField(fields, "Usuário", _txtUsername, 4);
+        AddTextField(fields, "Senha", _txtPassword, 5);
+        AddTextField(fields, "Caminho de destino", _txtDestinationPath, 6);
+        root.Controls.Add(fields, 0, 0);
+
+        _lblStatus.Text = "Teste pendente.";
+        _lblStatus.Dock = DockStyle.Fill;
+        _lblStatus.TextAlign = ContentAlignment.MiddleLeft;
+        _lblStatus.ForeColor = AppTheme.TextMuted;
+        root.Controls.Add(_lblStatus, 0, 1);
+
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.RightToLeft
+        };
+        _btnCancel.Text = "Cancelar";
+        _btnSave.Text = "Salvar configuração";
+        _btnTest.Text = "Testar conexão";
+        _btnSave.Enabled = false;
+
+        foreach (var button in new[] { _btnCancel, _btnSave, _btnTest })
+        {
+            button.Width = button == _btnSave ? 150 : 130;
+            button.Height = 30;
+            StyleButton(button, primary: button == _btnSave);
+            buttons.Controls.Add(button);
+        }
+
+        _btnCancel.Click += (_, _) => DialogResult = DialogResult.Cancel;
+        _btnTest.Click += async (_, _) => await TestConnectionAsync();
+        _btnSave.Click += (_, _) => SaveConnection();
+        root.Controls.Add(buttons, 0, 2);
+
+        foreach (var textBox in new[] { _txtServer, _txtDatabase, _txtUsername, _txtPassword, _txtDestinationPath })
+        {
+            textBox.TextChanged += (_, _) => ResetConnectionTest();
+            StyleTextBox(textBox);
+        }
+
+        _numPort.ValueChanged += (_, _) => ResetConnectionTest();
+        _chkEnabled.CheckedChanged += (_, _) => ResetConnectionTest();
+        _numPort.BackColor = AppTheme.InputBackground;
+        _numPort.ForeColor = AppTheme.Text;
+        _chkEnabled.BackColor = AppTheme.WindowBackground;
+        _chkEnabled.ForeColor = AppTheme.Text;
+    }
+
+    private static void AddTextField(TableLayoutPanel fields, string label, TextBox textBox, int row)
+    {
+        fields.Controls.Add(new Label { Text = label, TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 0, row);
+        fields.Controls.Add(textBox, 1, row);
+    }
+
+    private void Bind(DatabaseConnectionConfig connection)
+    {
+        _chkEnabled.Checked = connection.Enabled;
+        _txtServer.Text = connection.Server;
+        _numPort.Value = Math.Clamp(connection.Port <= 0 ? 5432 : connection.Port, 1, 65535);
+        _txtDatabase.Text = connection.Database;
+        _txtUsername.Text = connection.Username;
+        _txtPassword.Text = connection.Password;
+        _txtDestinationPath.Text = connection.DestinationPath;
+    }
+
+    private async Task TestConnectionAsync()
+    {
+        if (!TryBuildConnectionConfig(requireDestinationPath: false, out var config, out var message))
+        {
+            MessageBox.Show(message, "Conexão PostgreSQL", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        SetTestingState(testing: true);
+        try
+        {
+            await using var connection = new NpgsqlConnection(BuildConnectionString(config));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await connection.OpenAsync(cts.Token);
+            _connectionTested = true;
+            _btnSave.Enabled = true;
+            _lblStatus.Text = "Conexão testada com sucesso.";
+            _lblStatus.ForeColor = AppTheme.PrimaryDark;
+        }
+        catch (PostgresException ex)
+        {
+            ResetConnectionTest("Falha no teste de conexão.");
+            MessageBox.Show($"Não consegui conectar ao PostgreSQL.\n\n{FormatPostgresError(ex, config)}", "Conexão PostgreSQL", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        catch (OperationCanceledException)
+        {
+            ResetConnectionTest("Tempo limite ao testar a conexão.");
+            MessageBox.Show("Tempo limite ao testar a conexão.", "Conexão PostgreSQL", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        catch (Exception ex)
+        {
+            ResetConnectionTest("Falha no teste de conexão.");
+            MessageBox.Show($"Não consegui conectar ao PostgreSQL.\n\n{NormalizeDatabaseMessage(ex.Message)}", "Conexão PostgreSQL", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            SetTestingState(testing: false);
+        }
+    }
+
+    private void SaveConnection()
+    {
+        if (!_connectionTested)
+        {
+            return;
+        }
+
+        if (!TryBuildConnectionConfig(requireDestinationPath: true, out var config, out var message))
+        {
+            MessageBox.Show(message, "Conexão PostgreSQL", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        Connection = config;
+        DialogResult = DialogResult.OK;
+    }
+
+    private bool TryBuildConnectionConfig(bool requireDestinationPath, out DatabaseConnectionConfig config, out string message)
+    {
+        config = new DatabaseConnectionConfig
+        {
+            Enabled = _chkEnabled.Checked,
+            Server = _txtServer.Text.Trim(),
+            Port = (int)_numPort.Value,
+            Database = _txtDatabase.Text.Trim(),
+            Username = _txtUsername.Text.Trim(),
+            Password = _txtPassword.Text,
+            DestinationPath = _txtDestinationPath.Text.Trim()
+        };
+
+        if (string.IsNullOrWhiteSpace(config.Server))
+        {
+            message = "Informe o servidor.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(config.Database))
+        {
+            message = "Informe o banco de dados.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(config.Username))
+        {
+            message = "Informe o usuário.";
+            return false;
+        }
+
+        if (requireDestinationPath && string.IsNullOrWhiteSpace(config.DestinationPath))
+        {
+            message = "Informe o caminho de destino. Exemplo: /sist/icomp/empresa/exp";
+            return false;
+        }
+
+        if (requireDestinationPath && !config.DestinationPath.StartsWith("/", StringComparison.Ordinal))
+        {
+            message = "O caminho de destino deve estar no formato Linux. Exemplo: /sist/icomp/empresa/exp";
+            return false;
+        }
+
+        message = "";
+        return true;
+    }
+
+    internal static string FormatPostgresError(PostgresException ex, DatabaseConnectionConfig config)
+    {
+        if (string.Equals(ex.SqlState, "3D000", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{ex.SqlState}: banco de dados \"{config.Database}\" não existe";
+        }
+
+        if (string.Equals(ex.SqlState, "28P01", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{ex.SqlState}: usuário ou senha inválidos";
+        }
+
+        var message = NormalizeDatabaseMessage(ex.MessageText);
+        return string.IsNullOrWhiteSpace(ex.SqlState) ? message : $"{ex.SqlState}: {message}";
+    }
+
+    internal static string NormalizeDatabaseMessage(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return message;
+        }
+
+        var normalized = message
+            .Replace("n�o", "não", StringComparison.OrdinalIgnoreCase)
+            .Replace("usu�rio", "usuário", StringComparison.OrdinalIgnoreCase)
+            .Replace("conex�o", "conexão", StringComparison.OrdinalIgnoreCase)
+            .Replace("rela��o", "relação", StringComparison.OrdinalIgnoreCase)
+            .Replace("fun��o", "função", StringComparison.OrdinalIgnoreCase)
+            .Replace("configura��o", "configuração", StringComparison.OrdinalIgnoreCase)
+            .Replace("inv�lido", "inválido", StringComparison.OrdinalIgnoreCase)
+            .Replace("inv�lida", "inválida", StringComparison.OrdinalIgnoreCase)
+            .Replace("autentica��o", "autenticação", StringComparison.OrdinalIgnoreCase);
+
+        return normalized
+            .Replace("N�o", "Não", StringComparison.Ordinal)
+            .Replace("Ã£", "ã", StringComparison.Ordinal)
+            .Replace("Ã¡", "á", StringComparison.Ordinal)
+            .Replace("Ã¢", "â", StringComparison.Ordinal)
+            .Replace("Ã©", "é", StringComparison.Ordinal)
+            .Replace("Ãª", "ê", StringComparison.Ordinal)
+            .Replace("Ã­", "í", StringComparison.Ordinal)
+            .Replace("Ã³", "ó", StringComparison.Ordinal)
+            .Replace("Ã´", "ô", StringComparison.Ordinal)
+            .Replace("Ãº", "ú", StringComparison.Ordinal)
+            .Replace("Ã§", "ç", StringComparison.Ordinal)
+            .Replace("Ã‡", "Ç", StringComparison.Ordinal);
+    }
+
+    internal static string BuildConnectionString(DatabaseConnectionConfig config)
+    {
+        var builder = new NpgsqlConnectionStringBuilder
+        {
+            Host = config.Server,
+            Port = config.Port,
+            Database = config.Database,
+            Username = config.Username,
+            Password = config.Password,
+            Pooling = false,
+            Timeout = 8,
+            CommandTimeout = 8,
+            SslMode = SslMode.Disable
+        };
+
+        return builder.ConnectionString;
+    }
+
+    private void SetTestingState(bool testing)
+    {
+        _btnTest.Enabled = !testing;
+        _btnCancel.Enabled = !testing;
+        _btnSave.Enabled = !testing && _connectionTested;
+        _lblStatus.Text = testing ? "Testando conexão..." : _lblStatus.Text;
+        UseWaitCursor = testing;
+    }
+
+    private void ResetConnectionTest(string status = "Teste pendente.")
+    {
+        _connectionTested = false;
+        _btnSave.Enabled = false;
+        _lblStatus.Text = status;
+        _lblStatus.ForeColor = AppTheme.TextMuted;
+    }
+
+    private static void StyleButton(Button button, bool primary)
+    {
+        button.FlatStyle = FlatStyle.Flat;
+        button.UseVisualStyleBackColor = false;
+        button.FlatAppearance.BorderSize = 1;
+        button.FlatAppearance.MouseOverBackColor = primary ? AppTheme.PrimaryDark : AppTheme.PrimaryLight;
+        button.FlatAppearance.MouseDownBackColor = primary ? Color.FromArgb(49, 27, 146) : Color.FromArgb(211, 198, 232);
+
+        if (primary)
+        {
+            button.BackColor = AppTheme.Primary;
+            button.ForeColor = Color.White;
+            button.FlatAppearance.BorderColor = AppTheme.PrimaryDark;
+        }
+        else
+        {
+            button.BackColor = AppTheme.SurfaceAlt;
+            button.ForeColor = AppTheme.PrimaryDark;
+            button.FlatAppearance.BorderColor = AppTheme.Border;
+        }
+    }
+
+    private static void StyleTextBox(TextBox textBox)
+    {
+        textBox.BackColor = AppTheme.InputBackground;
+        textBox.ForeColor = AppTheme.Text;
+        textBox.BorderStyle = BorderStyle.FixedSingle;
     }
 }
 

@@ -19,7 +19,8 @@ O arquivo `XmlCopiador.config.json` fica ao lado do executavel. Ele guarda:
 - pasta base de destino;
 - acao padrao (`MOVE` ou `COPY`);
 - nomes das pastas dos meses;
-- empresas, CNPJs, UF e origem dos XMLs.
+- empresas, CNPJs, UF e origem dos XMLs;
+- opcao de gerar XML via PostgreSQL, periodo e conexoes de banco.
 
 Se esse arquivo existir, o aplicativo abre obedecendo exatamente essa configuracao.
 
@@ -40,9 +41,9 @@ O manifesto de update deve ter este formato:
 
 ```json
 {
-  "Version": "1.0.5",
-  "DownloadUrl": "https://raw.githubusercontent.com/cdlawliet/xmlCopiador/v1.0.5/release/XmlCopiador.exe",
-  "Sha256": "D05B9F1FF469D7DE393E9B4D0538AE64B6A8266BC4ED833AC9AD4B0F34726889"
+  "Version": "2.0.0",
+  "DownloadUrl": "https://raw.githubusercontent.com/cdlawliet/xmlCopiador/v2.0.0/release/XmlCopiador.exe",
+  "Sha256": "8A50ABABF84D2F1F0668C787BB872A3BBE0F5DEF9314C50A3DA4F05DCB1F126F"
 }
 ```
 
@@ -69,3 +70,7 @@ Os sufixos usados sao:
 
 - `-nfe.xml`: autorizadas
 - `-can.xml`: canceladas
+
+## Geracao via PostgreSQL
+
+Quando `Gerar XML` estiver marcado, o app conecta em cada banco ativo, cria a funcao `exportar_xml_nfe(date, date, text)` se ela ainda nao existir, executa a funcao para o periodo escolhido e so depois inicia a rotina normal de copiar ou mover XMLs.

@@ -8,15 +8,19 @@
     <AssemblyName>XmlCopiador</AssemblyName>
     <RootNamespace>XmlCopiadorApp</RootNamespace>
     <ApplicationIcon>..\Assets\ic_launcher.ico</ApplicationIcon>
-    <Version>1.0.5</Version>
-    <AssemblyVersion>1.0.5.0</AssemblyVersion>
-    <FileVersion>1.0.5.0</FileVersion>
+    <Version>2.0.0</Version>
+    <AssemblyVersion>2.0.0.0</AssemblyVersion>
+    <FileVersion>2.0.0.0</FileVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Npgsql" Version="8.0.6" />
+    <Content Include="..\função exportar_xml_nfe.sql" Link="função exportar_xml_nfe.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\Assets\ic_launcher.ico" Link="Assets\ic_launcher.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\Assets\ic_launcher.png" Link="Assets\ic_launcher.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\Assets\Logo Sem Fundo_3.png" Link="Assets\Logo Sem Fundo_3.png" CopyToOutputDirectory="PreserveNewest" />
     <EmbeddedResource Include="..\Assets\ic_launcher.ico" LogicalName="Assets.ic_launcher.ico" />
     <EmbeddedResource Include="..\Assets\Logo Sem Fundo_3.png" LogicalName="Assets.LogoSemFundo3.png" />
+    <EmbeddedResource Include="..\função exportar_xml_nfe.sql" LogicalName="Sql.exportar_xml_nfe.sql" />
   </ItemGroup>
 </Project>
