@@ -222,7 +222,7 @@ public sealed class MainForm : Form
             {
                 Dock = DockStyle.Fill,
                 Image = _logoImage,
-                Margin = new Padding(12, 0, 0, 0),
+                Margin = new Padding(12, 0, 14, 32),
                 SizeMode = PictureBoxSizeMode.Zoom
             }, 1, 0);
         }
