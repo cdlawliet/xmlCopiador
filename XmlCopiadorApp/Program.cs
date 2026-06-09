@@ -87,6 +87,8 @@ public sealed class StateOption
     public string Name { get; init; } = "";
 
     public string Label => $"{Name} ({Code})";
+
+    public override string ToString() => Label;
 }
 
 internal static class AppTheme
@@ -152,8 +154,8 @@ public sealed class MainForm : Form
     private readonly Button _btnSave = new();
     private readonly Button _btnBrowseDestination = new();
     private readonly Button _btnAdd = new();
+    private readonly Button _btnEdit = new();
     private readonly Button _btnRemove = new();
-    private readonly Button _btnBrowseOrigin = new();
     private readonly Button _btnLogs = new();
     private readonly Button _btnAddDatabase = new();
     private readonly Button _btnEditDatabase = new();
@@ -373,10 +375,13 @@ public sealed class MainForm : Form
         _grid.AutoGenerateColumns = false;
         _grid.AllowUserToAddRows = false;
         _grid.AllowUserToDeleteRows = false;
+        _grid.ReadOnly = true;
         _grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         _grid.MultiSelect = false;
         _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
         _grid.RowHeadersWidth = 28;
+        _grid.CellDoubleClick += (_, _) => EditCompany();
+        _grid.CellFormatting += FormatCompanyGridCell;
         _grid.DataError += (_, e) =>
         {
             e.ThrowException = false;
@@ -400,23 +405,19 @@ public sealed class MainForm : Form
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
         _btnAdd.Text = "Adicionar";
+        _btnEdit.Text = "Editar";
         _btnRemove.Text = "Remover";
-        _btnBrowseOrigin.Text = "Escolher origem";
-        _btnSave.Text = "Salvar configuracao";
-        _btnLogs.Text = "Abrir logs";
 
-        foreach (var button in new[] { _btnAdd, _btnRemove, _btnBrowseOrigin, _btnSave, _btnLogs })
+        foreach (var button in new[] { _btnAdd, _btnEdit, _btnRemove })
         {
-            button.Width = button == _btnSave ? 170 : button == _btnBrowseOrigin ? 150 : 120;
+            button.Width = 120;
             button.Height = 28;
             buttons.Controls.Add(button);
         }
 
         _btnAdd.Click += (_, _) => AddCompany();
+        _btnEdit.Click += (_, _) => EditCompany();
         _btnRemove.Click += (_, _) => RemoveCompany();
-        _btnBrowseOrigin.Click += (_, _) => BrowseOrigin();
-        _btnSave.Click += (_, _) => SaveConfigFromUi(showMessage: true);
-        _btnLogs.Click += (_, _) => OpenLogsFolder();
 
         _companiesLayout.Controls.Add(buttons, 0, 1);
         _companiesLayout.Controls.Add(BuildDatabaseConnectionsGroup(), 0, 2);
@@ -486,11 +487,18 @@ public sealed class MainForm : Form
 
     private Control BuildBottomBar()
     {
-        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4 };
+        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 6 };
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 230));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
+
+        _btnSave.Text = "Salvar configuracao";
+        _btnSave.Dock = DockStyle.Fill;
+        _btnLogs.Text = "Abrir logs";
+        _btnLogs.Dock = DockStyle.Fill;
 
         _lblStatus.Text = "Pronto";
         _lblStatus.TextAlign = ContentAlignment.MiddleLeft;
@@ -505,13 +513,17 @@ public sealed class MainForm : Form
         _btnStop.Dock = DockStyle.Fill;
         _btnStop.Enabled = false;
 
+        _btnSave.Click += (_, _) => SaveConfigFromUi(showMessage: true);
+        _btnLogs.Click += (_, _) => OpenLogsFolder();
         _btnStart.Click += (_, _) => StartCopy();
         _btnStop.Click += (_, _) => _cts?.Cancel();
 
-        panel.Controls.Add(_lblStatus, 0, 0);
-        panel.Controls.Add(_progress, 1, 0);
-        panel.Controls.Add(_btnStart, 2, 0);
-        panel.Controls.Add(_btnStop, 3, 0);
+        panel.Controls.Add(_btnSave, 0, 0);
+        panel.Controls.Add(_btnLogs, 1, 0);
+        panel.Controls.Add(_lblStatus, 2, 0);
+        panel.Controls.Add(_progress, 3, 0);
+        panel.Controls.Add(_btnStart, 4, 0);
+        panel.Controls.Add(_btnStop, 5, 0);
 
         return panel;
     }
@@ -524,8 +536,8 @@ public sealed class MainForm : Form
 
         StyleButton(_btnBrowseDestination, primary: false);
         StyleButton(_btnAdd, primary: false);
+        StyleButton(_btnEdit, primary: false);
         StyleButton(_btnRemove, primary: false);
-        StyleButton(_btnBrowseOrigin, primary: false);
         StyleButton(_btnSave, primary: true);
         StyleButton(_btnLogs, primary: false);
         StyleButton(_btnAddDatabase, primary: false);
@@ -853,6 +865,7 @@ public sealed class MainForm : Form
         var validStateCodes = StateOptions().Select(s => s.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var company in config.Companies)
         {
+            company.Cnpj = DigitsOnly(company.Cnpj);
             if (!validStateCodes.Contains(company.Uf))
             {
                 company.Uf = "22";
@@ -1034,30 +1047,28 @@ public sealed class MainForm : Form
         }
     }
 
-    private void BrowseOrigin()
+    private void AddCompany()
     {
-        if (_grid.CurrentRow?.DataBoundItem is not CompanyConfig company)
+        using var dialog = new CompanyDialog();
+        if (dialog.ShowDialog(this) == DialogResult.OK && dialog.Company is not null)
         {
-            MessageBox.Show("Selecione uma empresa primeiro.", "Origem", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-
-        using var dialog = new FolderBrowserDialog
-        {
-            Description = "Escolha a pasta de origem dos XMLs",
-            SelectedPath = Directory.Exists(company.OriginPath) ? company.OriginPath : Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
-        };
-
-        if (dialog.ShowDialog(this) == DialogResult.OK)
-        {
-            company.OriginPath = dialog.SelectedPath;
-            _grid.Refresh();
+            _companies.Add(dialog.Company);
         }
     }
 
-    private void AddCompany()
+    private void EditCompany()
     {
-        _companies.Add(new CompanyConfig { Enabled = true, Name = "Nova empresa", Uf = "22" });
+        if (_grid.CurrentRow?.DataBoundItem is not CompanyConfig company)
+        {
+            return;
+        }
+
+        using var dialog = new CompanyDialog(CloneCompany(company));
+        if (dialog.ShowDialog(this) == DialogResult.OK && dialog.Company is not null)
+        {
+            CopyCompany(dialog.Company, company);
+            _grid.Refresh();
+        }
     }
 
     private void RemoveCompany()
@@ -1071,6 +1082,39 @@ public sealed class MainForm : Form
         {
             _companies.Remove(company);
         }
+    }
+
+    private void FormatCompanyGridCell(object? sender, DataGridViewCellFormattingEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.ColumnIndex < 0)
+        {
+            return;
+        }
+
+        var column = _grid.Columns[e.ColumnIndex];
+        if (column.DataPropertyName == nameof(CompanyConfig.Cnpj) && e.Value is string cnpj)
+        {
+            e.Value = FormatCnpj(cnpj);
+            e.FormattingApplied = true;
+        }
+    }
+
+    private static CompanyConfig CloneCompany(CompanyConfig company) => new()
+    {
+        Enabled = company.Enabled,
+        Name = company.Name,
+        Cnpj = company.Cnpj,
+        Uf = company.Uf,
+        OriginPath = company.OriginPath
+    };
+
+    private static void CopyCompany(CompanyConfig source, CompanyConfig target)
+    {
+        target.Enabled = source.Enabled;
+        target.Name = source.Name;
+        target.Cnpj = DigitsOnly(source.Cnpj);
+        target.Uf = source.Uf;
+        target.OriginPath = source.OriginPath;
     }
 
     private void UpdateDatabaseSectionVisibility()
@@ -1383,7 +1427,10 @@ del "%~f0" >nul 2>nul
         var generationPeriod = GetSelectedGenerationPeriod();
         var snapshot = CloneConfig(_config);
 
-        _cts = new CancellationTokenSource();
+        var cts = new CancellationTokenSource();
+        _cts = cts;
+        string? finishMessage = null;
+        var finishIcon = MessageBoxIcon.Information;
 
         try
         {
@@ -1391,23 +1438,47 @@ del "%~f0" >nul 2>nul
             {
                 if (snapshot.GenerateXml)
                 {
-                    await GenerateXmlsFromDatabasesAsync(snapshot, generationPeriod.Start, generationPeriod.End, _cts.Token);
+                    await GenerateXmlsFromDatabasesAsync(snapshot, generationPeriod.Start, generationPeriod.End, cts.Token);
                 }
 
-                ProcessXmls(snapshot, selectedMonth.Number, year, simulate, _cts.Token);
+                ProcessXmls(snapshot, selectedMonth.Number, year, simulate, cts.Token);
             });
-            SetStatus(_cts.IsCancellationRequested ? "Cancelado" : "Concluido");
+            if (cts.IsCancellationRequested)
+            {
+                SetStatus("Cancelado");
+                finishIcon = MessageBoxIcon.Warning;
+                finishMessage = $"Processo cancelado.\n\nLog: {_currentLogFile}";
+            }
+            else
+            {
+                SetStatus("Concluido");
+                finishMessage = $"Processo concluido.\n\nLog: {_currentLogFile}";
+            }
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            Log("[AVISO] Processo cancelado pelo usuario.");
+            SetStatus("Cancelado");
+            finishIcon = MessageBoxIcon.Warning;
+            finishMessage = $"Processo cancelado.\n\nLog: {_currentLogFile}";
         }
         catch (Exception ex)
         {
             Log($"[ERRO] Falha inesperada: {ex.Message}");
             SetStatus("Finalizado com erro");
+            finishIcon = MessageBoxIcon.Error;
+            finishMessage = $"Processo finalizado com erro.\n\n{ex.Message}\n\nLog: {_currentLogFile}";
         }
         finally
         {
-            _cts.Dispose();
+            cts.Dispose();
             _cts = null;
             SetRunning(false);
+        }
+
+        if (!IsDisposed && finishMessage is not null)
+        {
+            MessageBox.Show(this, finishMessage, "Copiador de XML", MessageBoxButtons.OK, finishIcon);
         }
     }
 
@@ -1522,7 +1593,7 @@ del "%~f0" >nul 2>nul
             _btnStart.Enabled = !running;
             _btnStop.Enabled = running;
             _btnSave.Enabled = !running;
-            _grid.ReadOnly = running;
+            _grid.ReadOnly = true;
             _databaseGrid.ReadOnly = running;
             _chkSimulate.Enabled = !running;
             _chkGenerateXml.Enabled = !running;
@@ -1530,8 +1601,8 @@ del "%~f0" >nul 2>nul
             _dtPeriodStart.Enabled = !running && _chkGenerateXml.Checked && _chkCustomPeriod.Checked;
             _dtPeriodEnd.Enabled = !running && _chkGenerateXml.Checked && _chkCustomPeriod.Checked;
             _btnAdd.Enabled = !running;
+            _btnEdit.Enabled = !running;
             _btnRemove.Enabled = !running;
-            _btnBrowseOrigin.Enabled = !running;
             _btnAddDatabase.Enabled = !running;
             _btnEditDatabase.Enabled = !running;
             _btnRemoveDatabase.Enabled = !running;
@@ -1570,6 +1641,10 @@ del "%~f0" >nul 2>nul
         Log($"Periodo : {periodStart:dd/MM/yyyy} ate {periodEnd:dd/MM/yyyy}");
         Log($"Bancos  : {activeConnections.Count}");
         Log("==========================================================");
+
+        var successfulDatabases = 0;
+        var failedDatabases = new List<string>();
+        var totalGeneratedFiles = 0;
 
         for (var index = 0; index < activeConnections.Count; index++)
         {
@@ -1613,20 +1688,45 @@ del "%~f0" >nul 2>nul
                 }
                 var result = await exportCommand.ExecuteScalarAsync(token);
                 var generatedFiles = result is null || result == DBNull.Value ? 0 : Convert.ToInt32(result);
+                successfulDatabases++;
+                totalGeneratedFiles += generatedFiles;
                 Log($"  [OK] {generatedFiles} arquivo(s) gerado(s).");
             }
             catch (PostgresException ex)
             {
-                throw new InvalidOperationException($"Falha ao gerar XMLs em {label}: {DatabaseConnectionDialog.FormatPostgresError(ex, connectionConfig)}", ex);
+                var error = DatabaseConnectionDialog.FormatPostgresError(ex, connectionConfig);
+                failedDatabases.Add($"{label}: {error}");
+                Log($"  [ERRO] {error}");
+                Log(index < activeConnections.Count - 1 ? "  Continuando para o proximo banco ativo." : "  Nenhum banco restante para tentar.");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                throw new InvalidOperationException($"Falha ao gerar XMLs em {label}: {DatabaseConnectionDialog.NormalizeDatabaseMessage(ex.Message)}", ex);
+                var error = DatabaseConnectionDialog.NormalizeDatabaseMessage(ex.Message);
+                failedDatabases.Add($"{label}: {error}");
+                Log($"  [ERRO] {error}");
+                Log(index < activeConnections.Count - 1 ? "  Continuando para o proximo banco ativo." : "  Nenhum banco restante para tentar.");
             }
         }
 
         Log("");
-        Log("Geracao de XMLs concluida em todos os bancos ativos.");
+        Log("Resumo da geracao via PostgreSQL");
+        Log($"Bancos com sucesso : {successfulDatabases}");
+        Log($"Bancos com erro    : {failedDatabases.Count}");
+        Log($"Arquivos gerados   : {totalGeneratedFiles}");
+
+        if (successfulDatabases == 0)
+        {
+            throw new InvalidOperationException($"Todos os bancos ativos falharam na geracao de XMLs. Primeiro erro: {failedDatabases.FirstOrDefault() ?? "sem detalhes"}");
+        }
+
+        if (failedDatabases.Count > 0)
+        {
+            Log("Geracao de XMLs concluida parcialmente. A copia/movimentacao sera iniciada com os arquivos disponiveis.");
+        }
+        else
+        {
+            Log("Geracao de XMLs concluida em todos os bancos ativos.");
+        }
     }
 
     private static async Task<bool> ExportFunctionExistsAsync(NpgsqlConnection connection, CancellationToken token)
@@ -1861,6 +1961,7 @@ select exists (
             return false;
         }
 
+        company.Cnpj = DigitsOnly(company.Cnpj);
         if (!IsDigits(company.Cnpj, 14))
         {
             message = $"CNPJ invalido: {company.Cnpj}";
@@ -1888,7 +1989,17 @@ select exists (
         return value.Length == length && value.All(char.IsDigit);
     }
 
-    private static List<StateOption> StateOptions() => new()
+    internal static string DigitsOnly(string value) => new(value.Where(char.IsDigit).ToArray());
+
+    internal static string FormatCnpj(string value)
+    {
+        var digits = DigitsOnly(value);
+        return digits.Length == 14
+            ? $"{digits[..2]}.{digits.Substring(2, 3)}.{digits.Substring(5, 3)}/{digits.Substring(8, 4)}-{digits.Substring(12, 2)}"
+            : value;
+    }
+
+    internal static List<StateOption> StateOptions() => new()
     {
         new() { Code = "11", Name = "Rondonia" },
         new() { Code = "12", Name = "Acre" },
@@ -2115,6 +2226,252 @@ select exists (
         }
 
         if (InvokeRequired) BeginInvoke(Append); else Append();
+    }
+}
+
+internal sealed class CompanyDialog : Form
+{
+    private readonly CheckBox _chkEnabled = new();
+    private readonly TextBox _txtName = new();
+    private readonly MaskedTextBox _txtCnpj = new();
+    private readonly ComboBox _cmbState = new();
+    private readonly TextBox _txtOriginPath = new();
+    private readonly Button _btnBrowseOrigin = new();
+    private readonly Button _btnSave = new();
+    private readonly Button _btnCancel = new();
+
+    public CompanyConfig? Company { get; private set; }
+
+    public CompanyDialog(CompanyConfig? company = null)
+    {
+        Text = "Empresa";
+        Width = 620;
+        Height = 310;
+        MinimumSize = new Size(580, 300);
+        StartPosition = FormStartPosition.CenterParent;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        BackColor = AppTheme.WindowBackground;
+        ForeColor = AppTheme.Text;
+        Font = new Font("Segoe UI", 9F);
+
+        BuildUi();
+        Bind(company ?? new CompanyConfig { Enabled = true, Uf = "22" });
+    }
+
+    private void BuildUi()
+    {
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(14),
+            ColumnCount = 1,
+            RowCount = 2
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        Controls.Add(root);
+
+        var fields = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 3,
+            RowCount = 5
+        };
+        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
+        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+        for (var i = 0; i < fields.RowCount; i++)
+        {
+            fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        }
+
+        _chkEnabled.Text = "Ativa";
+        _chkEnabled.Dock = DockStyle.Fill;
+
+        _txtName.Dock = DockStyle.Fill;
+        _txtCnpj.Dock = DockStyle.Left;
+        _txtCnpj.Width = 160;
+        _txtCnpj.Mask = @"00\.000\.000\/0000-00";
+        _txtCnpj.TextMaskFormat = MaskFormat.ExcludePromptAndLiterals;
+        _txtCnpj.ResetOnPrompt = true;
+        _txtCnpj.ResetOnSpace = true;
+
+        _cmbState.Dock = DockStyle.Fill;
+        _cmbState.DropDownStyle = ComboBoxStyle.DropDownList;
+        _cmbState.Items.AddRange(MainForm.StateOptions()
+            .OrderBy(state => state.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Cast<object>()
+            .ToArray());
+
+        _txtOriginPath.Dock = DockStyle.Fill;
+        _btnBrowseOrigin.Text = "Procurar";
+        _btnBrowseOrigin.Width = 118;
+        _btnBrowseOrigin.Height = 26;
+        _btnBrowseOrigin.Margin = new Padding(0, 1, 0, 0);
+        _btnBrowseOrigin.Click += (_, _) => BrowseOrigin();
+
+        AddTextField(fields, "Ativa", _chkEnabled, 0);
+        AddTextField(fields, "Nome", _txtName, 1);
+        AddTextField(fields, "CNPJ", _txtCnpj, 2);
+        AddTextField(fields, "Estado", _cmbState, 3);
+        fields.Controls.Add(new Label { Text = "Origem", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 0, 4);
+        fields.Controls.Add(_txtOriginPath, 1, 4);
+        fields.Controls.Add(new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            Padding = new Padding(0),
+            Margin = new Padding(0),
+            WrapContents = false,
+            Controls = { _btnBrowseOrigin }
+        }, 2, 4);
+        root.Controls.Add(fields, 0, 0);
+
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.RightToLeft
+        };
+        _btnCancel.Text = "Cancelar";
+        _btnSave.Text = "Salvar";
+
+        foreach (var button in new[] { _btnCancel, _btnSave })
+        {
+            button.Width = 120;
+            button.Height = 30;
+            StyleButton(button, primary: button == _btnSave);
+            buttons.Controls.Add(button);
+        }
+
+        _btnCancel.Click += (_, _) => DialogResult = DialogResult.Cancel;
+        _btnSave.Click += (_, _) => SaveCompany();
+        root.Controls.Add(buttons, 0, 1);
+
+        foreach (var textBox in new TextBoxBase[] { _txtName, _txtCnpj, _txtOriginPath })
+        {
+            StyleTextBox(textBox);
+        }
+
+        _chkEnabled.BackColor = AppTheme.WindowBackground;
+        _chkEnabled.ForeColor = AppTheme.Text;
+        _cmbState.BackColor = AppTheme.InputBackground;
+        _cmbState.ForeColor = AppTheme.Text;
+        StyleButton(_btnBrowseOrigin, primary: false);
+    }
+
+    private static void AddTextField(TableLayoutPanel fields, string label, Control control, int row)
+    {
+        fields.Controls.Add(new Label { Text = label, TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 0, row);
+        fields.Controls.Add(control, 1, row);
+        fields.SetColumnSpan(control, 2);
+    }
+
+    private void Bind(CompanyConfig company)
+    {
+        _chkEnabled.Checked = company.Enabled;
+        _txtName.Text = company.Name;
+        _txtCnpj.Text = MainForm.DigitsOnly(company.Cnpj);
+        SelectState(string.IsNullOrWhiteSpace(company.Uf) ? "22" : company.Uf);
+        _txtOriginPath.Text = company.OriginPath;
+    }
+
+    private void SelectState(string code)
+    {
+        for (var i = 0; i < _cmbState.Items.Count; i++)
+        {
+            if (_cmbState.Items[i] is StateOption state && string.Equals(state.Code, code, StringComparison.OrdinalIgnoreCase))
+            {
+                _cmbState.SelectedIndex = i;
+                return;
+            }
+        }
+
+        for (var i = 0; i < _cmbState.Items.Count; i++)
+        {
+            if (_cmbState.Items[i] is StateOption state && state.Code == "22")
+            {
+                _cmbState.SelectedIndex = i;
+                return;
+            }
+        }
+    }
+
+    private void BrowseOrigin()
+    {
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "Escolha a pasta de origem dos XMLs",
+            SelectedPath = Directory.Exists(_txtOriginPath.Text) ? _txtOriginPath.Text : Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)
+        };
+
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            _txtOriginPath.Text = dialog.SelectedPath;
+        }
+    }
+
+    private void SaveCompany()
+    {
+        var company = new CompanyConfig
+        {
+            Enabled = _chkEnabled.Checked,
+            Name = _txtName.Text.Trim(),
+            Cnpj = MainForm.DigitsOnly(_txtCnpj.Text),
+            Uf = _cmbState.SelectedItem is StateOption state ? state.Code : "22",
+            OriginPath = _txtOriginPath.Text.Trim()
+        };
+
+        if (string.IsNullOrWhiteSpace(company.Name))
+        {
+            MessageBox.Show("Informe o nome da empresa.", "Empresa", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        if (company.Cnpj.Length != 14)
+        {
+            MessageBox.Show("Informe um CNPJ valido.", "Empresa", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(company.OriginPath))
+        {
+            MessageBox.Show("Informe a pasta de origem dos XMLs.", "Empresa", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        Company = company;
+        DialogResult = DialogResult.OK;
+    }
+
+    private static void StyleButton(Button button, bool primary)
+    {
+        button.FlatStyle = FlatStyle.Flat;
+        button.UseVisualStyleBackColor = false;
+        button.FlatAppearance.BorderSize = 1;
+        button.FlatAppearance.MouseOverBackColor = primary ? AppTheme.PrimaryDark : AppTheme.PrimaryLight;
+        button.FlatAppearance.MouseDownBackColor = primary ? Color.FromArgb(49, 27, 146) : Color.FromArgb(211, 198, 232);
+
+        if (primary)
+        {
+            button.BackColor = AppTheme.Primary;
+            button.ForeColor = Color.White;
+            button.FlatAppearance.BorderColor = AppTheme.PrimaryDark;
+        }
+        else
+        {
+            button.BackColor = AppTheme.SurfaceAlt;
+            button.ForeColor = AppTheme.PrimaryDark;
+            button.FlatAppearance.BorderColor = AppTheme.Border;
+        }
+    }
+
+    private static void StyleTextBox(TextBoxBase textBox)
+    {
+        textBox.BackColor = AppTheme.InputBackground;
+        textBox.ForeColor = AppTheme.Text;
+        textBox.BorderStyle = BorderStyle.FixedSingle;
     }
 }
 

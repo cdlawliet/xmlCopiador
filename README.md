@@ -25,6 +25,20 @@ O executavel sera publicado em:
 dist\XmlCopiador\XmlCopiador.exe
 ```
 
+## Instalador
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\gerar_instalador_xml.ps1
+```
+
+O instalador sera gerado em:
+
+```text
+release\XmlCopiadorSetup-2.0.1.exe
+```
+
+Ao instalar, a pasta padrao e `C:\CF Tecnologia\XML Copy`, mas o usuario pode escolher outro destino.
+
 ## Auto-update
 
 Configure o `XmlCopiador.config.json` ao lado do executavel:

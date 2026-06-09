@@ -27,6 +27,9 @@ if ($SelfContained) {
 }
 
 dotnet @publishArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "dotnet publish falhou com codigo $LASTEXITCODE."
+}
 
 $exe = Join-Path $output "XmlCopiador.exe"
 $sha256 = (Get-FileHash -Path $exe -Algorithm SHA256).Hash
