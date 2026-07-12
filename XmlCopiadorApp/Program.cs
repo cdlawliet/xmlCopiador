@@ -31,6 +31,7 @@ public sealed class XmlCopyConfig
     public int RetryCount { get; set; } = 2;
     public int RetryDelaySeconds { get; set; } = 2;
     public bool GenerateXml { get; set; }
+    public string XmlGenerationMode { get; set; } = "ServerPath";
     public bool CustomPeriod { get; set; }
     public DateTime? PeriodStart { get; set; }
     public DateTime? PeriodEnd { get; set; }
@@ -91,6 +92,14 @@ public sealed class StateOption
     public override string ToString() => Label;
 }
 
+public sealed class XmlGenerationModeOption
+{
+    public string Key { get; init; } = "";
+    public string Label { get; init; } = "";
+
+    public override string ToString() => Label;
+}
+
 internal static class AppTheme
 {
     public static readonly Color WindowBackground = Color.FromArgb(246, 242, 251);
@@ -112,6 +121,8 @@ public sealed class MainForm : Form
 {
     private const string ExportFunctionFileName = "função exportar_xml_nfe.sql";
     private const string ExportFunctionResourceName = "Sql.exportar_xml_nfe.sql";
+    private const string XmlGenerationModeServer = "ServerPath";
+    private const string XmlGenerationModeLocal = "LocalDestination";
     private static readonly HttpClient UpdateHttpClient = new();
 
     private readonly string _baseDir = AppContext.BaseDirectory;
@@ -139,6 +150,7 @@ public sealed class MainForm : Form
     private readonly CheckBox _chkSimulate = new();
     private readonly CheckBox _chkCreateFolders = new();
     private readonly CheckBox _chkGenerateXml = new();
+    private readonly ComboBox _cmbGenerateXmlMode = new();
     private readonly CheckBox _chkCustomPeriod = new();
     private readonly DateTimePicker _dtPeriodStart = new();
     private readonly DateTimePicker _dtPeriodEnd = new();
@@ -235,18 +247,20 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             Padding = new Padding(0),
-            ColumnCount = 9,
+            ColumnCount = 10,
             RowCount = 3
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 65));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 105));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 105));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 105));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 65));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
@@ -311,6 +325,10 @@ public sealed class MainForm : Form
             UpdatePeriodDateFields();
         };
 
+        _cmbGenerateXmlMode.Dock = DockStyle.Fill;
+        _cmbGenerateXmlMode.DropDownStyle = ComboBoxStyle.DropDownList;
+        _cmbGenerateXmlMode.Items.AddRange(XmlGenerationModeOptions().Cast<object>().ToArray());
+
         _chkCustomPeriod.Text = "Período personalizado";
         _chkCustomPeriod.Dock = DockStyle.Fill;
         _chkCustomPeriod.CheckedChanged += (_, _) => UpdatePeriodDateFields();
@@ -336,8 +354,8 @@ public sealed class MainForm : Form
 
         layout.Controls.Add(new Label { Text = "Destino", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 0, 0);
         layout.Controls.Add(_txtDestination, 1, 0);
-        layout.SetColumnSpan(_txtDestination, 5);
-        layout.Controls.Add(_btnBrowseDestination, 6, 0);
+        layout.SetColumnSpan(_txtDestination, 6);
+        layout.Controls.Add(_btnBrowseDestination, 7, 0);
         layout.SetColumnSpan(_btnBrowseDestination, 2);
 
         layout.Controls.Add(new Label { Text = "Mes", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 0, 1);
@@ -353,11 +371,12 @@ public sealed class MainForm : Form
         layout.Controls.Add(_numRetry, 1, 2);
         layout.Controls.Add(new Label { Text = "Espera", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 2, 2);
         layout.Controls.Add(_numDelay, 3, 2);
-        layout.Controls.Add(new Label { Text = "segundos", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 4, 2);
+        layout.Controls.Add(new Label { Text = "seg", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 4, 2);
         layout.Controls.Add(_chkGenerateXml, 5, 2);
-        layout.Controls.Add(_chkCustomPeriod, 6, 2);
-        layout.Controls.Add(_dtPeriodStart, 7, 2);
-        layout.Controls.Add(_dtPeriodEnd, 8, 2);
+        layout.Controls.Add(_cmbGenerateXmlMode, 6, 2);
+        layout.Controls.Add(_chkCustomPeriod, 7, 2);
+        layout.Controls.Add(_dtPeriodStart, 8, 2);
+        layout.Controls.Add(_dtPeriodEnd, 9, 2);
 
         return group;
     }
@@ -739,6 +758,7 @@ public sealed class MainForm : Form
         _cmbAction.SelectedItem = string.Equals(_config.Action, "COPY", StringComparison.OrdinalIgnoreCase) ? "COPY" : "MOVE";
         _chkCreateFolders.Checked = _config.CreateFolders;
         _chkGenerateXml.Checked = _config.GenerateXml;
+        SelectXmlGenerationMode(_config.XmlGenerationMode);
         _numRetry.Value = Math.Clamp(_config.RetryCount, 0, 20);
         _numDelay.Value = Math.Clamp(_config.RetryDelaySeconds, 0, 60);
 
@@ -774,6 +794,7 @@ public sealed class MainForm : Form
         _config.Action = (_cmbAction.SelectedItem?.ToString() ?? "MOVE").ToUpperInvariant();
         _config.CreateFolders = _chkCreateFolders.Checked;
         _config.GenerateXml = _chkGenerateXml.Checked;
+        _config.XmlGenerationMode = GetSelectedXmlGenerationMode();
         _config.CustomPeriod = _chkCustomPeriod.Checked;
         _config.PeriodStart = _dtPeriodStart.Value.Date;
         _config.PeriodEnd = _dtPeriodEnd.Value.Date;
@@ -812,6 +833,7 @@ public sealed class MainForm : Form
             RetryCount = 2,
             RetryDelaySeconds = 2,
             GenerateXml = false,
+            XmlGenerationMode = XmlGenerationModeServer,
             CustomPeriod = false,
             Companies = new List<CompanyConfig>(),
             DatabaseConnections = new List<DatabaseConnectionConfig>(),
@@ -882,8 +904,45 @@ public sealed class MainForm : Form
         }
 
         config.Action = string.Equals(config.Action, "COPY", StringComparison.OrdinalIgnoreCase) ? "COPY" : "MOVE";
+        config.XmlGenerationMode = IsLocalXmlGenerationMode(config.XmlGenerationMode) ? XmlGenerationModeLocal : XmlGenerationModeServer;
         config.RetryCount = Math.Clamp(config.RetryCount, 0, 20);
         config.RetryDelaySeconds = Math.Clamp(config.RetryDelaySeconds, 0, 60);
+    }
+
+    private static List<XmlGenerationModeOption> XmlGenerationModeOptions() => new()
+    {
+        new() { Key = XmlGenerationModeServer, Label = "Servidor" },
+        new() { Key = XmlGenerationModeLocal, Label = "Destino local" }
+    };
+
+    private void SelectXmlGenerationMode(string mode)
+    {
+        var normalized = IsLocalXmlGenerationMode(mode) ? XmlGenerationModeLocal : XmlGenerationModeServer;
+        for (var i = 0; i < _cmbGenerateXmlMode.Items.Count; i++)
+        {
+            if (_cmbGenerateXmlMode.Items[i] is XmlGenerationModeOption option && option.Key == normalized)
+            {
+                _cmbGenerateXmlMode.SelectedIndex = i;
+                return;
+            }
+        }
+
+        if (_cmbGenerateXmlMode.Items.Count > 0)
+        {
+            _cmbGenerateXmlMode.SelectedIndex = 0;
+        }
+    }
+
+    private string GetSelectedXmlGenerationMode()
+    {
+        return _cmbGenerateXmlMode.SelectedItem is XmlGenerationModeOption option
+            ? option.Key
+            : XmlGenerationModeServer;
+    }
+
+    private static bool IsLocalXmlGenerationMode(string? mode)
+    {
+        return string.Equals(mode, XmlGenerationModeLocal, StringComparison.OrdinalIgnoreCase);
     }
 
     private void BindPeriodConfigToUi(int month, int year)
@@ -928,6 +987,8 @@ public sealed class MainForm : Form
     private void UpdatePeriodDateFields()
     {
         var showDates = _chkGenerateXml.Checked && _chkCustomPeriod.Checked;
+        _cmbGenerateXmlMode.Visible = _chkGenerateXml.Checked;
+        _cmbGenerateXmlMode.Enabled = _chkGenerateXml.Checked && _cts is null;
         _chkCustomPeriod.Visible = _chkGenerateXml.Checked;
         _dtPeriodStart.Visible = showDates;
         _dtPeriodEnd.Visible = showDates;
@@ -1438,6 +1499,12 @@ del "%~f0" >nul 2>nul
             {
                 if (snapshot.GenerateXml)
                 {
+                    if (IsLocalXmlGenerationMode(snapshot.XmlGenerationMode))
+                    {
+                        await GenerateXmlsDirectlyToDestinationAsync(snapshot, selectedMonth.Number, year, generationPeriod.Start, generationPeriod.End, simulate, cts.Token);
+                        return;
+                    }
+
                     await GenerateXmlsFromDatabasesAsync(snapshot, generationPeriod.Start, generationPeriod.End, cts.Token);
                 }
 
@@ -1505,6 +1572,7 @@ del "%~f0" >nul 2>nul
         if (_config.GenerateXml)
         {
             var activeConnections = _config.DatabaseConnections.Where(c => c.Enabled).ToList();
+            var generateToServerPath = !IsLocalXmlGenerationMode(_config.XmlGenerationMode);
             if (activeConnections.Count == 0)
             {
                 message = "Marque pelo menos uma conexao PostgreSQL ativa para gerar os XMLs.";
@@ -1513,9 +1581,20 @@ del "%~f0" >nul 2>nul
 
             foreach (var connection in activeConnections)
             {
-                if (!ValidateDatabaseConnection(connection, out message))
+                if (!ValidateDatabaseConnection(connection, generateToServerPath, out message))
                 {
                     return false;
+                }
+            }
+
+            if (IsLocalXmlGenerationMode(_config.XmlGenerationMode))
+            {
+                foreach (var company in _config.Companies.Where(c => c.Enabled))
+                {
+                    if (!ValidateCompanyForGeneratedXml(company, out message))
+                    {
+                        return false;
+                    }
                 }
             }
 
@@ -1537,7 +1616,7 @@ del "%~f0" >nul 2>nul
         return true;
     }
 
-    private static bool ValidateDatabaseConnection(DatabaseConnectionConfig connection, out string message)
+    private static bool ValidateDatabaseConnection(DatabaseConnectionConfig connection, bool requireServerDestinationPath, out string message)
     {
         var label = GetDatabaseLabel(connection);
         if (string.IsNullOrWhiteSpace(connection.Server))
@@ -1564,13 +1643,13 @@ del "%~f0" >nul 2>nul
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(connection.DestinationPath))
+        if (requireServerDestinationPath && string.IsNullOrWhiteSpace(connection.DestinationPath))
         {
             message = $"Informe o caminho de destino da conexão PostgreSQL '{label}'.";
             return false;
         }
 
-        if (!connection.DestinationPath.Trim().StartsWith("/", StringComparison.Ordinal))
+        if (requireServerDestinationPath && !connection.DestinationPath.Trim().StartsWith("/", StringComparison.Ordinal))
         {
             message = $"O caminho de destino da conexão PostgreSQL '{label}' deve estar no formato Linux. Exemplo: /sist/icomp/empresa/exp";
             return false;
@@ -1597,6 +1676,7 @@ del "%~f0" >nul 2>nul
             _databaseGrid.ReadOnly = running;
             _chkSimulate.Enabled = !running;
             _chkGenerateXml.Enabled = !running;
+            _cmbGenerateXmlMode.Enabled = !running && _chkGenerateXml.Checked;
             _chkCustomPeriod.Enabled = !running && _chkGenerateXml.Checked && !IsSelectedCurrentMonth();
             _dtPeriodStart.Enabled = !running && _chkGenerateXml.Checked && _chkCustomPeriod.Checked;
             _dtPeriodEnd.Enabled = !running && _chkGenerateXml.Checked && _chkCustomPeriod.Checked;
@@ -1659,20 +1739,16 @@ del "%~f0" >nul 2>nul
                 await using var connection = new NpgsqlConnection(DatabaseConnectionDialog.BuildConnectionString(connectionConfig));
                 await connection.OpenAsync(token);
 
-                if (!await ExportFunctionExistsAsync(connection, token))
+                Log("  Recriando funcao public.exportar_xml_nfe...");
+                await using var recreateCommand = new NpgsqlCommand(BuildRecreateExportFunctionSql(functionSql), connection)
                 {
-                    Log("  Funcao exportar_xml_nfe nao encontrada. Criando...");
-                    await using var createCommand = new NpgsqlCommand(functionSql, connection) { CommandTimeout = 0 };
-                    await createCommand.ExecuteNonQueryAsync(token);
-                    Log("  Funcao exportar_xml_nfe criada.");
-                }
-                else
-                {
-                    Log("  Funcao exportar_xml_nfe encontrada.");
-                }
+                    CommandTimeout = 0
+                };
+                await recreateCommand.ExecuteNonQueryAsync(token);
+                Log("  Funcao public.exportar_xml_nfe recriada.");
 
                 var destinationPath = connectionConfig.DestinationPath.Trim().Replace('\\', '/');
-                await using var exportCommand = new NpgsqlCommand("select exportar_xml_nfe(@data_inicial, @data_final, @caminho)", connection)
+                await using var exportCommand = new NpgsqlCommand("select public.exportar_xml_nfe(@data_inicial, @data_final, @caminho)", connection)
                 {
                     CommandTimeout = 0
                 };
@@ -1729,25 +1805,151 @@ del "%~f0" >nul 2>nul
         }
     }
 
-    private static async Task<bool> ExportFunctionExistsAsync(NpgsqlConnection connection, CancellationToken token)
+    private async Task GenerateXmlsDirectlyToDestinationAsync(XmlCopyConfig config, int month, int year, DateTime periodStart, DateTime periodEnd, bool simulate, CancellationToken token)
     {
-        const string sql = """
-select exists (
-    select 1
-    from pg_proc p
-    join pg_namespace n on n.oid = p.pronamespace
-    where p.proname = 'exportar_xml_nfe'
-      and p.pronargs = 3
-      and p.proargtypes[0] = 'date'::regtype
-      and p.proargtypes[1] = 'date'::regtype
-      and p.proargtypes[2] = 'text'::regtype
-      and n.nspname = any (current_schemas(true))
-)
-""";
+        const int progressScale = 1000;
+        var activeConnections = config.DatabaseConnections.Where(c => c.Enabled).ToList();
+        if (activeConnections.Count == 0)
+        {
+            return;
+        }
 
-        await using var command = new NpgsqlCommand(sql, connection);
-        var result = await command.ExecuteScalarAsync(token);
-        return result is bool exists && exists;
+        var monthKey = month.ToString("00");
+        var monthFolder = GetMonthFolder(config, month);
+        var activeCompanies = config.Companies
+            .Where(c => c.Enabled)
+            .GroupBy(c => DigitsOnly(c.Cnpj))
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var totalProgress = Math.Max(1, activeConnections.Count * progressScale);
+        var completedProgress = 0;
+        var successfulDatabases = 0;
+        var failedDatabases = new List<string>();
+        var foundFiles = 0;
+        var writtenFiles = 0;
+        var warnings = 0;
+        var errors = 0;
+
+        SetStatus("Gerando XMLs direto no destino...");
+        SetProgress(0, totalProgress);
+        Log("==========================================================");
+        Log("Geracao de XMLs direto no destino");
+        Log("==========================================================");
+        Log($"Periodo : {periodStart:dd/MM/yyyy} ate {periodEnd:dd/MM/yyyy}");
+        Log($"Mes/Ano : {monthFolder} / {year}");
+        Log($"Destino : {config.DestinationBase}");
+        Log($"Modo    : {(simulate ? "SIMULACAO" : "EXECUCAO")}");
+        Log($"Bancos  : {activeConnections.Count}");
+        Log("==========================================================");
+
+        for (var index = 0; index < activeConnections.Count; index++)
+        {
+            token.ThrowIfCancellationRequested();
+            var connectionConfig = activeConnections[index];
+            var label = GetDatabaseLabel(connectionConfig);
+            var databaseFiles = 0;
+            Log("");
+            Log($"Banco {index + 1}/{activeConnections.Count}: {label}");
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(DatabaseConnectionDialog.BuildConnectionString(connectionConfig));
+                await connection.OpenAsync(token);
+
+                Log("  Recriando funcao public.listar_xml_nfe_app...");
+                await using var recreateCommand = new NpgsqlCommand(BuildRecreateDirectExportFunctionSql(), connection)
+                {
+                    CommandTimeout = 0
+                };
+                await recreateCommand.ExecuteNonQueryAsync(token);
+                Log("  Funcao public.listar_xml_nfe_app recriada.");
+
+                await using var exportCommand = new NpgsqlCommand("select nome_arquivo, conteudo_xml from public.listar_xml_nfe_app(@data_inicial, @data_final)", connection)
+                {
+                    CommandTimeout = 0
+                };
+                exportCommand.Parameters.Add("data_inicial", NpgsqlDbType.Date).Value = periodStart.Date;
+                exportCommand.Parameters.Add("data_final", NpgsqlDbType.Date).Value = periodEnd.Date;
+
+                Log($"  Script executado: {BuildDirectExportFunctionCallLog(periodStart, periodEnd)}");
+                await using var reader = await exportCommand.ExecuteReaderAsync(token);
+                while (await reader.ReadAsync(token))
+                {
+                    token.ThrowIfCancellationRequested();
+                    var fileName = reader.IsDBNull(0) ? "" : Path.GetFileName(reader.GetString(0).Trim());
+                    var xml = reader.IsDBNull(1) ? "" : reader.GetString(1);
+                    foundFiles++;
+                    databaseFiles++;
+
+                    if (!TryBuildGeneratedXmlDestination(config, activeCompanies, month, year, fileName, out var destinationFile, out var destinationError))
+                    {
+                        warnings++;
+                        Log($"  [AVISO] {fileName}: {destinationError}");
+                        continue;
+                    }
+
+                    if (simulate)
+                    {
+                        writtenFiles++;
+                        Log($"    [SIMULACAO] {destinationFile}");
+                        continue;
+                    }
+
+                    if (TryWriteGeneratedXmlFile(destinationFile, xml, config, out var writeError))
+                    {
+                        writtenFiles++;
+                        Log($"    [OK] {Path.GetFileName(destinationFile)}");
+                    }
+                    else
+                    {
+                        errors++;
+                        Log($"    [ERRO] {Path.GetFileName(destinationFile)} - {writeError}");
+                    }
+
+                    var partialProgress = completedProgress + Math.Min(progressScale - 1, databaseFiles);
+                    SetProgress(partialProgress, totalProgress);
+                }
+
+                successfulDatabases++;
+                Log($"  [OK] {databaseFiles} XML(s) retornado(s) pelo banco.");
+            }
+            catch (PostgresException ex)
+            {
+                var error = DatabaseConnectionDialog.FormatPostgresError(ex, connectionConfig);
+                failedDatabases.Add($"{label}: {error}");
+                Log($"  [ERRO] {error}");
+                Log(index < activeConnections.Count - 1 ? "  Continuando para o proximo banco ativo." : "  Nenhum banco restante para tentar.");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var error = DatabaseConnectionDialog.NormalizeDatabaseMessage(ex.Message);
+                failedDatabases.Add($"{label}: {error}");
+                Log($"  [ERRO] {error}");
+                Log(index < activeConnections.Count - 1 ? "  Continuando para o proximo banco ativo." : "  Nenhum banco restante para tentar.");
+            }
+
+            completedProgress += progressScale;
+            SetProgress(completedProgress, totalProgress);
+        }
+
+        Log("");
+        Log("Resumo da geracao direta");
+        Log($"Bancos com sucesso : {successfulDatabases}");
+        Log($"Bancos com erro    : {failedDatabases.Count}");
+        Log($"XMLs retornados    : {foundFiles}");
+        Log($"XMLs gravados      : {writtenFiles}");
+        Log($"Avisos             : {warnings}");
+        Log($"Erros              : {errors}");
+        Log($"Log                : {_currentLogFile}");
+
+        if (successfulDatabases == 0)
+        {
+            throw new InvalidOperationException($"Todos os bancos ativos falharam na geracao direta de XMLs. Primeiro erro: {failedDatabases.FirstOrDefault() ?? "sem detalhes"}");
+        }
+
+        if (foundFiles == 0)
+        {
+            Log("[AVISO] Nenhum XML foi retornado pelos bancos. Confira periodo e dados do banco.");
+        }
     }
 
     private string LoadExportFunctionSql()
@@ -1776,9 +1978,61 @@ select exists (
         throw new FileNotFoundException($"Nao encontrei o arquivo {ExportFunctionFileName} para criar a funcao exportar_xml_nfe.");
     }
 
+    private static string BuildRecreateExportFunctionSql(string functionSql)
+    {
+        return $"""
+DROP FUNCTION IF EXISTS public.exportar_xml_nfe(date, date, text);
+{functionSql.Trim()}
+""";
+    }
+
+    private static string BuildRecreateDirectExportFunctionSql()
+    {
+        return """
+DROP FUNCTION IF EXISTS public.listar_xml_nfe_app(date, date);
+CREATE OR REPLACE FUNCTION public.listar_xml_nfe_app(
+    data_inicial date,
+    data_final date)
+RETURNS TABLE(nome_arquivo text, conteudo_xml text) AS
+$BODY$
+BEGIN
+    RETURN QUERY
+    SELECT (n.c_nfechave || '-nfe.xml')::text,
+           n.c_xmlnfe::text
+    FROM a_nfeinf n
+    WHERE n.c_dataenv BETWEEN data_inicial AND data_final
+      AND n.c_sit IN ('A', 'AT')
+      AND n.c_serv = 'NFE';
+
+    RETURN QUERY
+    SELECT (n.c_nfechave || '-nfe.xml')::text,
+           n.c_xmlnfe::text
+    FROM a_nfeinf n
+    WHERE n.c_dataenv BETWEEN data_inicial AND data_final
+      AND n.c_sit IN ('C', 'CA')
+      AND n.c_serv = 'NFE';
+
+    RETURN QUERY
+    SELECT (n.c_nfechave || '-can.xml')::text,
+           n.c_xmlnfe::text
+    FROM a_nfeinf n
+    WHERE n.c_dataenv BETWEEN data_inicial AND data_final
+      AND n.c_sit IN ('C', 'CA')
+      AND n.c_serv = 'CAN';
+END;
+$BODY$
+LANGUAGE plpgsql;
+""";
+    }
+
     private static string BuildExportFunctionCallLog(DateTime periodStart, DateTime periodEnd, string destinationPath)
     {
-        return $"SELECT exportar_xml_nfe('{periodStart:yyyy-MM-dd}', '{periodEnd:yyyy-MM-dd}', '{EscapeSqlLiteral(destinationPath)}');";
+        return $"SELECT public.exportar_xml_nfe('{periodStart:yyyy-MM-dd}', '{periodEnd:yyyy-MM-dd}', '{EscapeSqlLiteral(destinationPath)}');";
+    }
+
+    private static string BuildDirectExportFunctionCallLog(DateTime periodStart, DateTime periodEnd)
+    {
+        return $"SELECT nome_arquivo, conteudo_xml FROM public.listar_xml_nfe_app('{periodStart:yyyy-MM-dd}', '{periodEnd:yyyy-MM-dd}');";
     }
 
     private static string EscapeSqlLiteral(string value)
@@ -1793,11 +2047,147 @@ select exists (
         return $"{server}:{connection.Port}/{database}";
     }
 
+    private static string GetMonthFolder(XmlCopyConfig config, int month)
+    {
+        var monthKey = month.ToString("00");
+        return config.MonthFolders.TryGetValue(monthKey, out var folder) && !string.IsNullOrWhiteSpace(folder)
+            ? folder
+            : $"{monthKey} - Mes";
+    }
+
+    private static bool TryBuildGeneratedXmlDestination(
+        XmlCopyConfig config,
+        Dictionary<string, CompanyConfig> activeCompanies,
+        int month,
+        int year,
+        string fileName,
+        out string destinationFile,
+        out string message)
+    {
+        destinationFile = "";
+
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            message = "Nome do arquivo vazio retornado pelo banco.";
+            return false;
+        }
+
+        var suffix = fileName.EndsWith("-can.xml", StringComparison.OrdinalIgnoreCase)
+            ? "-can.xml"
+            : fileName.EndsWith("-nfe.xml", StringComparison.OrdinalIgnoreCase)
+                ? "-nfe.xml"
+                : "";
+        if (string.IsNullOrWhiteSpace(suffix))
+        {
+            message = "Sufixo nao reconhecido.";
+            return false;
+        }
+
+        var key = fileName[..^suffix.Length];
+        if (key.Length < 22)
+        {
+            message = "Chave de acesso invalida.";
+            return false;
+        }
+
+        var companyCnpj = key.Substring(6, 14);
+        if (!activeCompanies.TryGetValue(companyCnpj, out var company))
+        {
+            message = $"CNPJ {FormatCnpj(companyCnpj)} nao esta ativo na lista de empresas.";
+            return false;
+        }
+
+        var model = key.Substring(20, 2);
+        var group = FileGroups().FirstOrDefault(g =>
+            string.Equals(g.Model, model, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(g.Suffix, suffix, StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(group.DocType))
+        {
+            message = $"Modelo {model} nao configurado para o sufixo {suffix}.";
+            return false;
+        }
+
+        var year2 = (year % 100).ToString("00");
+        var destination = Path.Combine(config.DestinationBase, $"20{year2}", GetMonthFolder(config, month), company.Cnpj, group.DocType, group.Status);
+        destinationFile = Path.Combine(destination, fileName);
+        message = "";
+        return true;
+    }
+
+    private bool TryWriteGeneratedXmlFile(string destinationFile, string xml, XmlCopyConfig config, out string error)
+    {
+        try
+        {
+            var destination = Path.GetDirectoryName(destinationFile);
+            if (string.IsNullOrWhiteSpace(destination))
+            {
+                error = "Destino invalido.";
+                return false;
+            }
+
+            if (config.CreateFolders)
+            {
+                Directory.CreateDirectory(destination);
+            }
+            else if (!Directory.Exists(destination))
+            {
+                error = $"Destino nao existe: {destination}";
+                return false;
+            }
+
+            File.WriteAllText(destinationFile, xml, DetectXmlEncoding(xml));
+            error = "";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private static Encoding DetectXmlEncoding(string xml)
+    {
+        const string marker = "encoding";
+        if (!string.IsNullOrWhiteSpace(xml))
+        {
+            var headerEnd = xml.IndexOf("?>", StringComparison.Ordinal);
+            var header = headerEnd >= 0 ? xml[..Math.Min(headerEnd, 200)] : xml[..Math.Min(xml.Length, 200)];
+            var markerIndex = header.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (markerIndex >= 0)
+            {
+                var equalsIndex = header.IndexOf('=', markerIndex);
+                if (equalsIndex >= 0)
+                {
+                    var quoteIndex = header.IndexOfAny(new[] { '"', '\'' }, equalsIndex + 1);
+                    if (quoteIndex >= 0)
+                    {
+                        var quote = header[quoteIndex];
+                        var endQuoteIndex = header.IndexOf(quote, quoteIndex + 1);
+                        if (endQuoteIndex > quoteIndex)
+                        {
+                            var encodingName = header.Substring(quoteIndex + 1, endQuoteIndex - quoteIndex - 1);
+                            try
+                            {
+                                return Encoding.GetEncoding(encodingName);
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+    }
+
     private void ProcessXmls(XmlCopyConfig config, int month, int year, bool simulate, CancellationToken token)
     {
         const int progressScale = 1000;
         var monthKey = month.ToString("00");
-        var monthFolder = config.MonthFolders.TryGetValue(monthKey, out var folder) ? folder : $"{monthKey} - Mes";
+        var monthFolder = GetMonthFolder(config, month);
         var year2 = (year % 100).ToString("00");
         var enabledCompanies = config.Companies.Where(c => c.Enabled).ToList();
         var totalGroups = Math.Max(1, enabledCompanies.Count * 4);
@@ -1977,6 +2367,31 @@ select exists (
         if (string.IsNullOrWhiteSpace(company.OriginPath))
         {
             message = "Pasta de origem nao informada.";
+            return false;
+        }
+
+        message = "";
+        return true;
+    }
+
+    private static bool ValidateCompanyForGeneratedXml(CompanyConfig company, out string message)
+    {
+        if (string.IsNullOrWhiteSpace(company.Name))
+        {
+            message = "Nome da empresa nao informado.";
+            return false;
+        }
+
+        company.Cnpj = DigitsOnly(company.Cnpj);
+        if (!IsDigits(company.Cnpj, 14))
+        {
+            message = $"CNPJ invalido: {company.Cnpj}";
+            return false;
+        }
+
+        if (!IsDigits(company.Uf, 2))
+        {
+            message = $"Estado invalido: {company.Uf}. Selecione um estado na lista.";
             return false;
         }
 
@@ -2672,7 +3087,7 @@ internal sealed class DatabaseConnectionDialog : Form
             return;
         }
 
-        if (!TryBuildConnectionConfig(requireDestinationPath: true, out var config, out var message))
+        if (!TryBuildConnectionConfig(requireDestinationPath: false, out var config, out var message))
         {
             MessageBox.Show(message, "Conexão PostgreSQL", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;

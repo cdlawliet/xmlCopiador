@@ -1,16 +1,16 @@
-CREATE OR REPLACE FUNCTION exportar_xml_nfe(
+CREATE OR REPLACE FUNCTION public.exportar_xml_nfe(
     data_inicial date,
     data_final date,
     caminho text)
-  RETURNS integer AS
+RETURNS integer AS
 $BODY$
 DECLARE
     caminho_arquivo TEXT := caminho;
     nome_arquivo TEXT;
     comando_sql TEXT;
-    contador INTEGER := 0;  -- Contador de arquivos exportados
+    contador INTEGER := 0;
 BEGIN
-    -- Exportar registros com c_sit = 'A' ou 'AT'
+    -- Exportar registros autorizados (somente c_serv = 'NFE')
     FOR nome_arquivo IN
         SELECT c_nfechave
         FROM a_nfeinf
@@ -21,41 +21,44 @@ BEGIN
             SELECT c_xmlnfe
             FROM a_nfeinf
             WHERE c_nfechave = ''' || nome_arquivo || '''
-        ) TO ''' || caminho_arquivo || nome_arquivo || '-nfe' || '.xml''';
+              AND c_serv = ''NFE''
+        ) TO ''' || caminho_arquivo || nome_arquivo || '-nfe.xml''';
+
         EXECUTE comando_sql;
-        contador := contador + 1;  -- Incrementa o contador
+        contador := contador + 1;
     END LOOP;
 
-    -- Exportar registros com c_sit = 'C' ou 'CA'
+    -- Exportar registros cancelados
     FOR nome_arquivo IN
         SELECT c_nfechave
         FROM a_nfeinf
         WHERE c_dataenv BETWEEN data_inicial AND data_final
           AND c_sit IN ('C', 'CA')
     LOOP
-        -- Exportar o registro original
+        -- Exportar XML de autorizacao (somente NFE)
         comando_sql := 'COPY (
             SELECT c_xmlnfe
             FROM a_nfeinf
             WHERE c_nfechave = ''' || nome_arquivo || '''
-        ) TO ''' || caminho_arquivo || nome_arquivo || '-nfe' || '.xml''';
+              AND c_serv = ''NFE''
+        ) TO ''' || caminho_arquivo || nome_arquivo || '-nfe.xml''';
+
         EXECUTE comando_sql;
         contador := contador + 1;
 
-        -- Exportar o registro CAN (se existir)
+        -- Exportar XML de cancelamento (somente CAN)
         comando_sql := 'COPY (
             SELECT c_xmlnfe
             FROM a_nfeinf
             WHERE c_nfechave = ''' || nome_arquivo || '''
               AND c_serv = ''CAN''
-        ) TO ''' || caminho_arquivo || nome_arquivo || '-can' || '.xml''';
+        ) TO ''' || caminho_arquivo || nome_arquivo || '-can.xml''';
+
         EXECUTE comando_sql;
-        contador := contador + 1;  -- Incrementa mesmo se não houver registro (COPY não gera erro se não encontrar dados)
+        contador := contador + 1;
     END LOOP;
-    
-    RETURN contador;  -- Retorna o total de arquivos exportados
+
+    RETURN contador;
 END;
 $BODY$
-  LANGUAGE plpgsql;
-ALTER FUNCTION exportar_xml_nfe(date, date, text)
-  OWNER TO icomp;
+LANGUAGE plpgsql;
